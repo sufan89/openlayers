@@ -17,7 +17,6 @@ describe('ol.source.VectorTile', function() {
   const format = new MVT();
   const source = new VectorTileSource({
     format: format,
-    tilePixelRatio: 8,
     url: 'spec/ol/data/{z}-{x}-{y}.vector.pbf'
   });
   let tile;
@@ -60,7 +59,7 @@ describe('ol.source.VectorTile', function() {
       tile.load();
       const key = listen(tile, 'change', function(e) {
         if (tile.getState() === TileState.LOADED) {
-          const sourceTile = tile.load()[0];
+          const sourceTile = source.getSourceTiles(1, source.getProjection(), tile)[0];
           expect(sourceTile.getFeatures().length).to.be.greaterThan(0);
           unlistenByKey(key);
           done();
@@ -105,7 +104,7 @@ describe('ol.source.VectorTile', function() {
 
       function tileUrlFunction(tileCoord) {
         ++requested;
-        if (tileCoord.toString() == '6,27,-57') {
+        if (tileCoord.toString() == '5,13,-29') {
           return tileCoord.join('/');
         }
       }
@@ -154,7 +153,7 @@ describe('ol.source.VectorTile', function() {
       map.renderSync();
       setTimeout(function() {
         expect(requested).to.be.greaterThan(1);
-        expect(loaded).to.eql(['6/27/-57']);
+        expect(loaded).to.eql(['5/13/-29']);
         done();
       }, 0);
     });

@@ -4,7 +4,7 @@
 import {getUid} from '../../util.js';
 import TileRange from '../../TileRange.js';
 import TileState from '../../TileState.js';
-import {createEmpty, getIntersection, getTopLeft} from '../../extent.js';
+import {createEmpty, equals, getIntersection, getTopLeft} from '../../extent.js';
 import CanvasLayerRenderer from './Layer.js';
 import {apply as applyTransform, compose as composeTransform, makeInverse, toString as transformToString} from '../../transform.js';
 
@@ -20,6 +20,12 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
    */
   constructor(tileLayer) {
     super(tileLayer);
+
+    /**
+     * Rendered extent has changed since the previous `renderFrame()` call
+     * @type {boolean}
+     */
+    this.extentChanged = true;
 
     /**
      * @private
@@ -82,11 +88,12 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
    * @param {number} z Tile coordinate z.
    * @param {number} x Tile coordinate x.
    * @param {number} y Tile coordinate y.
-   * @param {number} pixelRatio Pixel ratio.
-   * @param {import("../../proj/Projection.js").default} projection Projection.
+   * @param {import("../../PluggableMap.js").FrameState} frameState Frame state.
    * @return {!import("../../Tile.js").default} Tile.
    */
-  getTile(z, x, y, pixelRatio, projection) {
+  getTile(z, x, y, frameState) {
+    const pixelRatio = frameState.pixelRatio;
+    const projection = frameState.viewState.projection;
     const tileLayer = /** @type {import("../../layer/Tile.js").default} */ (this.getLayer());
     const tileSource = tileLayer.getSource();
     let tile = tileSource.getTile(z, x, y, pixelRatio, projection);
@@ -143,7 +150,8 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
     const tileSource = tileLayer.getSource();
     const sourceRevision = tileSource.getRevision();
     const tileGrid = tileSource.getTileGridForProjection(projection);
-    const z = tileGrid.getZForResolution(viewResolution, this.zDirection);
+    const zDirection = tileSource.zDirection === undefined ? this.zDirection : tileSource.zDirection;
+    const z = tileGrid.getZForResolution(viewResolution, zDirection);
     const tileResolution = tileGrid.getResolution(z);
     let extent = frameState.extent;
 
@@ -186,7 +194,7 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
     this.newTiles_ = false;
     for (let x = tileRange.minX; x <= tileRange.maxX; ++x) {
       for (let y = tileRange.minY; y <= tileRange.maxY; ++y) {
-        const tile = this.getTile(z, x, y, pixelRatio, projection);
+        const tile = this.getTile(z, x, y, frameState);
         if (this.isDrawableTile(tile)) {
           const uid = getUid(this);
           if (tile.getState() == TileState.LOADED) {
@@ -272,8 +280,8 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
       const originTileCoord = tileGrid.getTileCoordForCoordAndZ(getTopLeft(canvasExtent), currentZ);
       const originTileExtent = tileGrid.getTileCoordExtent(originTileCoord);
       const origin = applyTransform(this.tempTransform_, [
-        Math.round(tilePixelRatio * (originTileExtent[0] - canvasExtent[0]) / tileResolution),
-        Math.round(tilePixelRatio * (canvasExtent[3] - originTileExtent[3]) / tileResolution)
+        tilePixelRatio * (originTileExtent[0] - canvasExtent[0]) / tileResolution,
+        tilePixelRatio * (canvasExtent[3] - originTileExtent[3]) / tileResolution
       ]);
       const tileGutter = tilePixelRatio * tileSource.getGutterForProjection(projection);
       const tilesToDraw = tilesToDrawByZ[currentZ];
@@ -300,10 +308,12 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
 
     this.renderedRevision = sourceRevision;
     this.renderedResolution = tileResolution;
+    this.extentChanged = !this.renderedExtent_ || !equals(this.renderedExtent_, canvasExtent);
     this.renderedExtent_ = canvasExtent;
 
     this.manageTilePyramid(frameState, tileSource, tileGrid, pixelRatio,
       projection, extent, z, tileLayer.getPreload());
+    this.updateCacheSize_(frameState, tileSource);
     this.scheduleExpireCache(frameState, tileSource);
 
     this.postRender(context, frameState);
@@ -381,6 +391,130 @@ class CanvasTileLayerRenderer extends CanvasLayerRenderer {
    */
   getTileImage(tile) {
     return /** @type {import("../../ImageTile.js").default} */ (tile).getImage();
+  }
+
+  /**
+   * @param {import("../../PluggableMap.js").FrameState} frameState Frame state.
+   * @param {import("../../source/Tile.js").default} tileSource Tile source.
+   * @protected
+   */
+  scheduleExpireCache(frameState, tileSource) {
+    if (tileSource.canExpireCache()) {
+      /**
+       * @param {import("../../source/Tile.js").default} tileSource Tile source.
+       * @param {import("../../PluggableMap.js").default} map Map.
+       * @param {import("../../PluggableMap.js").FrameState} frameState Frame state.
+       */
+      const postRenderFunction = function(tileSource, map, frameState) {
+        const tileSourceKey = getUid(tileSource);
+        if (tileSourceKey in frameState.usedTiles) {
+          tileSource.expireCache(frameState.viewState.projection,
+            frameState.usedTiles[tileSourceKey]);
+        }
+      }.bind(null, tileSource);
+
+      frameState.postRenderFunctions.push(
+        /** @type {import("../../PluggableMap.js").PostRenderFunction} */ (postRenderFunction)
+      );
+    }
+  }
+
+  /**
+   * @param {!Object<string, !Object<string, boolean>>} usedTiles Used tiles.
+   * @param {import("../../source/Tile.js").default} tileSource Tile source.
+   * @param {import('../../Tile.js').default} tile Tile.
+   * @protected
+   */
+  updateUsedTiles(usedTiles, tileSource, tile) {
+    // FIXME should we use tilesToDrawByZ instead?
+    const tileSourceKey = getUid(tileSource);
+    if (!(tileSourceKey in usedTiles)) {
+      usedTiles[tileSourceKey] = {};
+    }
+    usedTiles[tileSourceKey][tile.getKey()] = true;
+  }
+
+  /**
+   * Check if the cache is big enough, and increase its size if necessary.
+   * @param {import("../../PluggableMap.js").FrameState} frameState Frame state.
+   * @param {import("../../source/Tile.js").default} tileSource Tile source.
+   * @private
+   */
+  updateCacheSize_(frameState, tileSource) {
+    const tileSourceKey = getUid(tileSource);
+    let size = 0;
+    if (tileSourceKey in frameState.usedTiles) {
+      size += Object.keys(frameState.usedTiles[tileSourceKey]).length;
+    }
+    if (tileSourceKey in frameState.wantedTiles) {
+      size += Object.keys(frameState.wantedTiles[tileSourceKey]).length;
+    }
+    const tileCache = tileSource.tileCache;
+    if (tileCache.highWaterMark < size) {
+      tileCache.highWaterMark = size;
+    }
+  }
+
+  /**
+   * Manage tile pyramid.
+   * This function performs a number of functions related to the tiles at the
+   * current zoom and lower zoom levels:
+   * - registers idle tiles in frameState.wantedTiles so that they are not
+   *   discarded by the tile queue
+   * - enqueues missing tiles
+   * @param {import("../../PluggableMap.js").FrameState} frameState Frame state.
+   * @param {import("../../source/Tile.js").default} tileSource Tile source.
+   * @param {import("../../tilegrid/TileGrid.js").default} tileGrid Tile grid.
+   * @param {number} pixelRatio Pixel ratio.
+   * @param {import("../../proj/Projection.js").default} projection Projection.
+   * @param {import("../../extent.js").Extent} extent Extent.
+   * @param {number} currentZ Current Z.
+   * @param {number} preload Load low resolution tiles up to 'preload' levels.
+   * @param {function(import("../../Tile.js").default)=} opt_tileCallback Tile callback.
+   * @protected
+   */
+  manageTilePyramid(
+    frameState,
+    tileSource,
+    tileGrid,
+    pixelRatio,
+    projection,
+    extent,
+    currentZ,
+    preload,
+    opt_tileCallback
+  ) {
+    const tileSourceKey = getUid(tileSource);
+    if (!(tileSourceKey in frameState.wantedTiles)) {
+      frameState.wantedTiles[tileSourceKey] = {};
+    }
+    const wantedTiles = frameState.wantedTiles[tileSourceKey];
+    const tileQueue = frameState.tileQueue;
+    const minZoom = tileGrid.getMinZoom();
+    let tile, tileRange, tileResolution, x, y, z;
+    for (z = minZoom; z <= currentZ; ++z) {
+      tileRange = tileGrid.getTileRangeForExtentAndZ(extent, z, tileRange);
+      tileResolution = tileGrid.getResolution(z);
+      for (x = tileRange.minX; x <= tileRange.maxX; ++x) {
+        for (y = tileRange.minY; y <= tileRange.maxY; ++y) {
+          if (currentZ - z <= preload) {
+            tile = tileSource.getTile(z, x, y, pixelRatio, projection);
+            if (tile.getState() == TileState.IDLE) {
+              wantedTiles[tile.getKey()] = true;
+              if (!tileQueue.isKeyQueued(tile.getKey())) {
+                tileQueue.enqueue([tile, tileSourceKey,
+                  tileGrid.getTileCoordCenter(tile.tileCoord), tileResolution]);
+              }
+            }
+            if (opt_tileCallback !== undefined) {
+              opt_tileCallback(tile);
+            }
+          } else {
+            tileSource.useTile(z, x, y, projection);
+          }
+        }
+      }
+    }
   }
 
 }

@@ -82,7 +82,7 @@ export class CustomTile extends ImageTile {
 /**
  * @typedef {Object} Options
  * @property {import("./Source.js").AttributionLike} [attributions] Attributions.
- * @property {number} [cacheSize] Tile cache size. Default is four times as many tiles as a fullscreen map needs.
+ * @property {number} [cacheSize] Tile cache size. The default depends on the screen size. Will increase if too small.
  * @property {null|string} [crossOrigin] The `crossOrigin` attribute for loaded images.  Note that
  * you must provide a `crossOrigin` value  you want to access pixel data with the Canvas renderer.
  * See https://developer.mozilla.org/en-US/docs/Web/HTML/CORS_enabled_image for more detail.
@@ -111,6 +111,10 @@ export class CustomTile extends ImageTile {
  * @property {number} [transition] Duration of the opacity transition for rendering.
  * To disable the opacity transition, pass `transition: 0`.
  * @property {number} [tileSize=256] Tile size. Same tile size is used for all zoom levels.
+ * @property {number} [zDirection] Indicate which resolution should be used
+ * by a renderer if the views resolution does not match any resolution of the tile source.
+ * If 0, the nearest resolution will be used. If 1, the nearest lower resolution
+ * will be used. If -1, the nearest higher resolution will be used.
  */
 
 
@@ -252,6 +256,11 @@ class Zoomify extends TileImage {
       tileUrlFunction: tileUrlFunction,
       transition: options.transition
     });
+
+    /**
+     * @inheritDoc
+     */
+    this.zDirection = options.zDirection;
 
   }
 

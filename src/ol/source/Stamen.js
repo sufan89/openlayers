@@ -74,7 +74,7 @@ const LayerConfig = {
  */
 const ProviderConfig = {
   'terrain': {
-    minZoom: 4,
+    minZoom: 0,
     maxZoom: 18
   },
   'toner': {
@@ -82,15 +82,15 @@ const ProviderConfig = {
     maxZoom: 20
   },
   'watercolor': {
-    minZoom: 1,
-    maxZoom: 16
+    minZoom: 0,
+    maxZoom: 18
   }
 };
 
 
 /**
  * @typedef {Object} Options
- * @property {number} [cacheSize] Tile cache size. Default is four times as many tiles as a fullscreen map needs.
+ * @property {number} [cacheSize] Tile cache size. The default depends on the screen size. Will increase if too small.
  * @property {string} layer Layer name.
  * @property {number} [minZoom] Minimum zoom.
  * @property {number} [maxZoom] Maximum zoom.
@@ -103,6 +103,8 @@ const ProviderConfig = {
  *   imageTile.getImage().src = src;
  * };
  * ```
+ * @property {number} [transition] Duration of the opacity transition for rendering.
+ * To disable the opacity transition, pass `transition: 0`.
  * @property {string} [url] URL template. Must include `{x}`, `{y}` or `{-y}`, and `{z}` placeholders.
  * @property {boolean} [wrapX=true] Whether to wrap the world horizontally.
  */
@@ -137,6 +139,7 @@ class Stamen extends XYZ {
       opaque: layerConfig.opaque,
       reprojectionErrorThreshold: options.reprojectionErrorThreshold,
       tileLoadFunction: options.tileLoadFunction,
+      transition: options.transition,
       url: url,
       wrapX: options.wrapX
     });

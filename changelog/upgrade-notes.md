@@ -4,6 +4,28 @@
 
 #### Backwards incompatible changes
 
+##### The `setCenter`, `setZoom`, `setResolution` and `setRotation` methods on `ol/View` do not bypass constraints anymore
+
+Previously, these methods allowed setting values that were inconsistent with the given view constraints.
+This is no longer the case and all changes to the view state now follow the same logic:
+target values are provided and constraints are applied on these to determine the actual values to be used.
+
+##### Removal of the `constrainResolution` option on `View.fit`, `PinchZoom`, `MouseWheelZoom` and `ol/interaction.js`
+
+The `constrainResolution` option is now only supported by the `View` class. A `View.setConstrainResolution` method was added as well.
+
+Generally, the responsibility of applying center/rotation/resolutions constraints was moved from interactions and controls to the `View` class.
+
+##### The view `extent` option now applies to the whole viewport
+
+Previously, this options only constrained the view *center*. This behaviour can still be obtained by specifying `constrainCenterOnly` in the view options.
+
+As a side effect, the view `rotate` method is gone and has been replaced with `adjustRotation` which takes a delta as input.
+
+##### Zoom is constrained so only one world is visible
+
+Previously, maps showed multiple worlds at low zoom levels. Now, the view is restricted to show only one world. To get the previous behavior, configure the `ol/View` with `multiWorld: true`.
+
 ##### Removal of deprecated methods
 
 The `inherits` function that was used to inherit the prototype methods from one constructor into another has been removed.
@@ -98,6 +120,58 @@ Due to the constraint above (layers can only be added to a single map), the over
 ##### The `ol/Graticule` has been replaced by `ol/layer/Graticule`
 
 Previously, a graticule was not a layer.  Now it is.  See the graticule example for details on how to add a graticule layer to your map.
+
+##### `ol/format/Feature` API change
+
+The `getLastExtent()` method, which was required for custom `tileLoadFunction`s in `ol/source/Vector`, has been removed because it is no longer needed (see below).
+
+##### `ol/VectorTile` API changes
+
+* Removal of the `getProjection()` and `setProjection()` methods. These were used in custom `tileLoadFunction`s on `ol/source/VectorTile`, which work differently now (see below).
+* Removal of the `getExtent()` and `setExtent()` methods. These were used in custom `tileLoadFunction`s on `ol/source/VectorTile`, which work differently now (see below).
+
+##### Custom tileLoadFunction on a VectorTile source needs changes
+
+Previously, applications needed to call `setProjection()` and `setExtent()` on the tile in a custom `tileLoadFunction` on `ol/source/VectorTile`. The format's `getLastExtent()` method was used to get the extent. All this is no longer needed. Instead, the `extent` (first argument to the loader function) and `projection` (third argument to the loader function) are simply passed as `extent` and `featureProjection` options to the format's `readFeatures()` method.
+
+Example for an old `tileLoadFunction`:
+
+```js
+function(tile, url) {
+  tile.setLoader(function() {
+    fetch(url).then(function(response) {
+      response.arrayBuffer().then(function(data) {
+        var format = tile.getFormat();
+        tile.setProjection(format.readProjection(data));
+        tile.setFeatures(format.readFeatures(data, {
+          // featureProjection is not required for ol/format/MVT
+          featureProjection: map.getView().getProjection()
+        }));
+        tile.setExtent(format.getLastExtent());
+      })
+    })
+  }
+});
+```
+
+This function needs to be changed to:
+
+```js
+function(tile, url) {
+  tile.setLoader(function(extent, resolution, projection) {
+    fetch(url).then(function(response) {
+      response.arrayBuffer().then(function(data) {
+        var format = tile.getFormat();
+        tile.setFeatures(format.readFeatures(data, {
+          // extent is only required for ol/format/MVT
+          extent: extent,
+          featureProjection: projection
+        }));
+      })
+    })
+  }
+});
+```
 
 ##### Drop of support for the experimental WebGL renderer
 
