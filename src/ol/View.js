@@ -21,9 +21,9 @@ import {clamp, modulo} from './math.js';
 import {assign} from './obj.js';
 import {createProjection, METERS_PER_UNIT} from './proj.js';
 import Units from './proj/Units.js';
-import {equals} from './coordinate';
-import {easeOut} from './easing';
-import {createMinMaxResolution} from './resolutionconstraint';
+import {equals} from './coordinate.js';
+import {easeOut} from './easing.js';
+import {createMinMaxResolution} from './resolutionconstraint.js';
 
 
 /**
@@ -191,6 +191,11 @@ const DEFAULT_MIN_ZOOM = 0;
  * This is the object to act upon to change the center, resolution,
  * and rotation of the map.
  *
+ * A View has a `projection`. The projection determines the
+ * coordinate system of the center, and its units determine the units of the
+ * resolution (projection units per pixel). The default projection is
+ * Spherical Mercator (EPSG:3857).
+ *
  * ### The view states
  *
  * An View is determined by three states: `center`, `resolution`,
@@ -201,11 +206,6 @@ const DEFAULT_MIN_ZOOM = 0;
  * internally use the `resolution` state. Still, the `setZoom` and `getZoom`
  * methods are available, as well as `getResolutionForZoom` and
  * `getZoomForResolution` to switch from one system to the other.
- *
- * A View has a `projection`. The projection determines the
- * coordinate system of the center, and its units determine the units of the
- * resolution (projection units per pixel). The default projection is
- * Spherical Mercator (EPSG:3857).
  *
  * ### The constraints
  *
@@ -218,7 +218,7 @@ const DEFAULT_MIN_ZOOM = 0;
  *
  * The *resolution constraint* typically restricts min/max values and
  * snaps to specific resolutions. It is determined by the following
- * options: `resolutions`, `maxResolution`, `maxZoom`, and `zoomFactor`.
+ * options: `resolutions`, `maxResolution`, `maxZoom` and `zoomFactor`.
  * If `resolutions` is set, the other three options are ignored. See
  * documentation for each option for more information. By default, the view
  * only has a min/max restriction and allow intermediary zoom levels when
@@ -226,7 +226,7 @@ const DEFAULT_MIN_ZOOM = 0;
  *
  * The *rotation constraint* snaps to specific angles. It is determined
  * by the following options: `enableRotation` and `constrainRotation`.
- * By default the rotation value is snapped to zero when approaching the
+ * By default rotation is allowed and its value is snapped to zero when approaching the
  * horizontal.
  *
  * The *center constraint* is determined by the `extent` option. By
@@ -283,8 +283,6 @@ class View extends BaseObject {
      * @type {number|undefined}
      */
     this.updateAnimationKey_;
-
-    this.updateAnimations_ = this.updateAnimations_.bind(this);
 
     /**
      * @private
@@ -452,6 +450,17 @@ class View extends BaseObject {
    * @api
    */
   animate(var_args) {
+    if (this.isDef() && !this.getAnimating()) {
+      this.resolveConstraints(0);
+    }
+    this.animate_.apply(this, arguments);
+  }
+
+  /**
+   * @private
+   * @param {...(AnimationOptions|function(boolean): void)} var_args Animation options.
+   */
+  animate_(var_args) {
     let animationCount = arguments.length;
     let callback;
     if (animationCount > 1 && typeof arguments[animationCount - 1] === 'function') {
@@ -641,11 +650,7 @@ class View extends BaseObject {
     // prune completed series
     this.animations_ = this.animations_.filter(Boolean);
     if (more && this.updateAnimationKey_ === undefined) {
-      this.updateAnimationKey_ = requestAnimationFrame(this.updateAnimations_);
-    }
-
-    if (!this.getAnimating()) {
-      setTimeout(this.resolveConstraints.bind(this), 0);
+      this.updateAnimationKey_ = requestAnimationFrame(this.updateAnimations_.bind(this));
     }
   }
 
@@ -922,20 +927,15 @@ class View extends BaseObject {
   }
 
   /**
-   * @param {number} pixelRatio Pixel ratio for center rounding.
    * @return {State} View state.
    */
-  getState(pixelRatio) {
+  getState() {
     const center = /** @type {import("./coordinate.js").Coordinate} */ (this.getCenter());
     const projection = this.getProjection();
     const resolution = /** @type {number} */ (this.getResolution());
-    const pixelResolution = resolution / pixelRatio;
     const rotation = this.getRotation();
     return {
-      center: [
-        Math.round(center[0] / pixelResolution) * pixelResolution,
-        Math.round(center[1] / pixelResolution) * pixelResolution
-      ],
+      center: center.slice(0),
       projection: projection !== undefined ? projection : null,
       resolution: resolution,
       rotation: rotation,
@@ -1085,7 +1085,7 @@ class View extends BaseObject {
     const callback = options.callback ? options.callback : VOID;
 
     if (options.duration !== undefined) {
-      this.animate({
+      this.animate_({
         resolution: resolution,
         center: this.getConstrainedCenter(center, resolution),
         duration: options.duration,
@@ -1147,7 +1147,6 @@ class View extends BaseObject {
    * constraint will apply.
    * @param {number} ratio The ratio to apply on the view resolution.
    * @param {import("./coordinate.js").Coordinate=} opt_anchor The origin of the transformation.
-   * @observable
    * @api
    */
   adjustResolution(ratio, opt_anchor) {
@@ -1179,7 +1178,6 @@ class View extends BaseObject {
    * constraint will apply.
    * @param {number} delta Relative value to add to the zoom rotation, in radians.
    * @param {import("./coordinate.js").Coordinate=} opt_anchor The rotation center.
-   * @observable
    * @api
    */
   adjustRotation(delta, opt_anchor) {
@@ -1312,7 +1310,7 @@ class View extends BaseObject {
         this.cancelAnimations();
       }
 
-      this.animate({
+      this.animate_({
         rotation: newRotation,
         center: newCenter,
         resolution: newResolution,
@@ -1325,9 +1323,13 @@ class View extends BaseObject {
 
   /**
    * Notify the View that an interaction has started.
+   * The view state will be resolved to a stable one if needed
+   * (depending on its constraints).
    * @api
    */
   beginInteraction() {
+    this.resolveConstraints(0);
+
     this.setHint(ViewHint.INTERACTING, 1);
   }
 
@@ -1404,11 +1406,19 @@ function animationCallback(callback, returnValue) {
  */
 export function createCenterConstraint(options) {
   if (options.extent !== undefined) {
-    return createExtent(options.extent, options.constrainOnlyCenter,
-      options.smoothExtentConstraint !== undefined ? options.smoothExtentConstraint : true);
-  } else {
-    return centerNone;
+    const smooth = options.smoothExtentConstraint !== undefined ? options.smoothExtentConstraint : true;
+    return createExtent(options.extent, options.constrainOnlyCenter, smooth);
   }
+
+  const projection = createProjection(options.projection, 'EPSG:3857');
+  if (options.multiWorld !== true && projection.isGlobal()) {
+    const extent = projection.getExtent().slice();
+    extent[0] = -Infinity;
+    extent[2] = Infinity;
+    return createExtent(extent, false, false);
+  }
+
+  return centerNone;
 }
 
 

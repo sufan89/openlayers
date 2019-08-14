@@ -1,16 +1,17 @@
 import Map from '../src/ol/Map.js';
 import View from '../src/ol/View.js';
 import TileLayer from '../src/ol/layer/Tile.js';
-import TileJSON from '../src/ol/source/TileJSON';
-import Feature from '../src/ol/Feature';
-import Point from '../src/ol/geom/Point';
-import VectorLayer from '../src/ol/layer/Vector';
-import {Vector} from '../src/ol/source';
-import {fromLonLat} from '../src/ol/proj';
-import WebGLPointsLayerRenderer from '../src/ol/renderer/webgl/PointsLayer';
-import {lerp} from '../src/ol/math';
+import TileJSON from '../src/ol/source/TileJSON.js';
+import Feature from '../src/ol/Feature.js';
+import Point from '../src/ol/geom/Point.js';
+import VectorLayer from '../src/ol/layer/Vector.js';
+import {Vector} from '../src/ol/source.js';
+import {fromLonLat} from '../src/ol/proj.js';
+import WebGLPointsLayerRenderer from '../src/ol/renderer/webgl/PointsLayer.js';
+import {lerp} from '../src/ol/math.js';
 
-const features = [];
+const key = 'pk.eyJ1IjoidHNjaGF1YiIsImEiOiJjaW5zYW5lNHkxMTNmdWttM3JyOHZtMmNtIn0.CDIBD8H-G2Gf-cPkIuWtRg';
+
 const vectorSource = new Vector({
   features: [],
   attributions: 'National UFO Reporting Center'
@@ -39,16 +40,17 @@ class WebglPointsLayer extends VectorLayer {
   createRenderer() {
     return new WebGLPointsLayerRenderer(this, {
       texture: texture,
-      colorCallback: function(feature, vertex, component) {
-        // component at index 3 is alpha
-        if (component === 3) {
-          return 1;
-        }
-
+      colorCallback: function(feature, color) {
         // color is interpolated based on year (min is 1910, max is 2013)
         // please note: most values are between 2000-2013
         const ratio = (feature.get('year') - 1950) / (2013 - 1950);
-        return lerp(oldColor[component], newColor[component], ratio * ratio) / 255;
+
+        color[0] = lerp(oldColor[0], newColor[0], ratio * ratio) / 255;
+        color[1] = lerp(oldColor[1], newColor[1], ratio * ratio) / 255;
+        color[2] = lerp(oldColor[2], newColor[2], ratio * ratio) / 255;
+        color[3] = 1;
+
+        return color;
       },
       texCoordCallback: function(feature, component) {
         let coords = shapeTextureCoords[feature.get('shape')];
@@ -70,17 +72,14 @@ function loadData() {
   client.open('GET', 'data/csv/ufo_sighting_data.csv');
   client.onload = function() {
     const csv = client.responseText;
-    let curIndex;
-    let prevIndex = 0;
-    let line;
-    while ((curIndex = csv.indexOf('\n', prevIndex)) > 0) {
-      line = csv.substr(prevIndex, curIndex - prevIndex).split(',');
-      prevIndex = curIndex + 1;
+    const features = [];
 
-      // skip header
-      if (prevIndex === 0) {
-        continue;
-      }
+    let prevIndex = csv.indexOf('\n') + 1; // scan past the header line
+
+    let curIndex;
+    while ((curIndex = csv.indexOf('\n', prevIndex)) != -1) {
+      const line = csv.substr(prevIndex, curIndex - prevIndex).split(',');
+      prevIndex = curIndex + 1;
 
       const coords = fromLonLat([parseFloat(line[5]), parseFloat(line[4])]);
 
@@ -104,11 +103,11 @@ function loadData() {
 
 loadData();
 
-new Map({
+const map = new Map({
   layers: [
     new TileLayer({
       source: new TileJSON({
-        url: 'https://api.tiles.mapbox.com/v3/mapbox.world-dark.json?secure',
+        url: 'https://api.tiles.mapbox.com/v4/mapbox.world-dark.json?access_token=' + key,
         crossOrigin: 'anonymous'
       })
     }),
@@ -121,4 +120,19 @@ new Map({
     center: [0, 4000000],
     zoom: 2
   })
+});
+
+const info = document.getElementById('info');
+map.on('pointermove', function(evt) {
+  if (map.getView().getInteracting()) {
+    return;
+  }
+  const pixel = evt.pixel;
+  info.innerText = '';
+  map.forEachFeatureAtPixel(pixel, function(feature) {
+    const datetime = feature.get('datetime');
+    const duration = feature.get('duration');
+    const shape = feature.get('shape');
+    info.innerText = 'On ' + datetime + ', lasted ' + duration + ' seconds and had a "' + shape + '" shape.';
+  });
 });

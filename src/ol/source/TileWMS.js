@@ -81,7 +81,7 @@ class TileWMS extends TileImage {
    */
   constructor(opt_options) {
 
-    const options = opt_options || /** @type {Options} */ ({});
+    const options = opt_options ? opt_options : {};
 
     const params = options.params || {};
 
@@ -168,7 +168,8 @@ class TileWMS extends TileImage {
       tileGrid = this.getTileGridForProjection(projectionObj);
     }
 
-    const tileCoord = tileGrid.getTileCoordForCoordAndResolution(coordinate, resolution);
+    const z = tileGrid.getZForResolution(resolution, this.zDirection);
+    const tileCoord = tileGrid.getTileCoordForCoordAndZ(coordinate, z);
 
     if (tileGrid.getResolutions().length <= tileCoord[0]) {
       return undefined;
@@ -209,6 +210,45 @@ class TileWMS extends TileImage {
 
     return this.getRequestUrl_(tileCoord, tileSize, tileExtent,
       1, sourceProjectionObj || projectionObj, baseParams);
+  }
+
+  /**
+   * Return the GetLegendGraphic URL, optionally optimized for the passed
+   * resolution and possibly including any passed specific parameters. Returns
+   * `undefined` if the GetLegendGraphic URL cannot be constructed.
+   *
+   * @param {number} [resolution] Resolution. If set to undefined, `SCALE`
+   *     will not be calculated and included in URL.
+   * @param {Object} [params] GetLegendGraphic params. Default `FORMAT` is
+   *     `image/png`. `VERSION` should not be specified here.
+   * @return {string|undefined} GetLegendGraphic URL.
+   * @api
+   */
+  getGetLegendGraphicUrl(resolution, params) {
+    const layers = this.params_.LAYERS;
+    const isSingleLayer = !Array.isArray(layers) || this.params_['LAYERS'].length === 1;
+    if (this.urls[0] === undefined || !isSingleLayer) {
+      return undefined;
+    }
+
+    const baseParams = {
+      'SERVICE': 'WMS',
+      'VERSION': DEFAULT_WMS_VERSION,
+      'REQUEST': 'GetLegendGraphic',
+      'FORMAT': 'image/png',
+      'LAYER': layers
+    };
+
+    if (resolution !== undefined) {
+      const mpu = this.getProjection() ? this.getProjection().getMetersPerUnit() : 1;
+      const dpi = 25.4 / 0.28;
+      const inchesPerMeter = 39.37;
+      baseParams['SCALE'] = resolution * mpu * inchesPerMeter * dpi;
+    }
+
+    assign(baseParams, params);
+
+    return appendParams(/** @type {string} */ (this.urls[0]), baseParams);
   }
 
   /**

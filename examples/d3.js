@@ -2,7 +2,7 @@ import Map from '../src/ol/Map.js';
 import View from '../src/ol/View.js';
 import {getWidth, getCenter} from '../src/ol/extent.js';
 import {Layer, Tile as TileLayer} from '../src/ol/layer.js';
-import SourceState from '../src/ol/source/State';
+import SourceState from '../src/ol/source/State.js';
 import {fromLonLat, toLonLat} from '../src/ol/proj.js';
 import Stamen from '../src/ol/source/Stamen.js';
 
@@ -85,7 +85,7 @@ const map = new Map({
 /**
  * Load the topojson data and create an ol/layer/Image for that data.
  */
-d3.json('data/topojson/us.json', function(error, us) {
+d3.json('data/topojson/us.json').then(function(us) {
 
   const layer = new CanvasLayer({
     features: topojson.feature(us, us.objects.counties)

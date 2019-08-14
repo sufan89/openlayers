@@ -38,7 +38,7 @@ import {createEditingStyle} from '../style/Style.js';
 const ExtentEventType = {
   /**
    * Triggered after the extent is changed
-   * @event ExtentEventType#extentchanged
+   * @event ExtentEvent#extentchanged
    * @api
    */
   EXTENTCHANGED: 'extentchanged'
@@ -47,10 +47,10 @@ const ExtentEventType = {
 
 /**
  * @classdesc
- * Events emitted by {@link module:ol/interaction/Extent~ExtentInteraction} instances are
+ * Events emitted by {@link module:ol/interaction/Extent~Extent} instances are
  * instances of this type.
  */
-class ExtentInteractionEvent extends Event {
+class ExtentEvent extends Event {
 
   /**
    * @param {import("../extent.js").Extent} extent the new extent
@@ -75,10 +75,10 @@ class ExtentInteractionEvent extends Event {
  * Once drawn, the vector box can be modified by dragging its vertices or edges.
  * This interaction is only supported for mouse devices.
  *
- * @fires Event
+ * @fires ExtentEvent
  * @api
  */
-class ExtentInteraction extends PointerInteraction {
+class Extent extends PointerInteraction {
   /**
    * @param {Options=} opt_options Options.
    */
@@ -126,7 +126,7 @@ class ExtentInteraction extends PointerInteraction {
 
     /**
      * Feature for displaying the visible pointer
-     * @type {Feature}
+     * @type {Feature<Point>}
      * @private
      */
     this.vertexFeature_ = null;
@@ -265,7 +265,7 @@ class ExtentInteraction extends PointerInteraction {
       this.vertexFeature_ = vertexFeature;
       this.vertexOverlay_.getSource().addFeature(vertexFeature);
     } else {
-      const geometry = /** @type {Point} */ (vertexFeature.getGeometry());
+      const geometry = vertexFeature.getGeometry();
       geometry.setCoordinates(vertex);
     }
     return vertexFeature;
@@ -399,7 +399,7 @@ class ExtentInteraction extends PointerInteraction {
     //Null extent means no bbox
     this.extent_ = extent ? extent : null;
     this.createOrUpdateExtentFeature_(extent);
-    this.dispatchEvent(new ExtentInteractionEvent(this.extent_));
+    this.dispatchEvent(new ExtentEvent(this.extent_));
   }
 }
 
@@ -470,4 +470,4 @@ function getSegments(extent) {
 }
 
 
-export default ExtentInteraction;
+export default Extent;

@@ -19,6 +19,8 @@ import Text from '../../../../../src/ol/style/Text.js';
 import {createXYZ} from '../../../../../src/ol/tilegrid.js';
 import VectorTileRenderType from '../../../../../src/ol/layer/VectorTileRenderType.js';
 import {getUid} from '../../../../../src/ol/util.js';
+import TileLayer from '../../../../../src/ol/layer/Tile.js';
+import XYZ from '../../../../../src/ol/source/XYZ.js';
 
 
 describe('ol.renderer.canvas.VectorTileLayer', function() {
@@ -39,6 +41,7 @@ describe('ol.renderer.canvas.VectorTileLayer', function() {
       target.style.height = '256px';
       document.body.appendChild(target);
       map = new Map({
+        pixelRatio: 1,
         view: new View({
           center: [0, 0],
           zoom: 0
@@ -98,7 +101,7 @@ describe('ol.renderer.canvas.VectorTileLayer', function() {
     it('creates a new instance', function() {
       const renderer = new CanvasVectorTileLayerRenderer(layer);
       expect(renderer).to.be.a(CanvasVectorTileLayerRenderer);
-      expect(renderer.zDirection).to.be(0);
+      expect(renderer.getLayer()).to.equal(layer);
     });
 
     it('does not render replays for pure image rendering', function() {
@@ -140,7 +143,7 @@ describe('ol.renderer.canvas.VectorTileLayer', function() {
     });
 
     it('gives precedence to feature styles over layer styles', function() {
-      const spy = sinon.spy(map.getRenderer().getLayerRenderer(layer),
+      const spy = sinon.spy(layer.getRenderer(),
         'renderFeature');
       map.renderSync();
       expect(spy.getCall(0).args[2]).to.be(layer.getStyle());
@@ -203,6 +206,25 @@ describe('ol.renderer.canvas.VectorTileLayer', function() {
       expect(Object.keys(tile.executorGroups)[1]).to.be(getUid(layer2));
     });
 
+    it('reuses render container and adds and removes overlay context', function(done) {
+      map.getLayers().insertAt(0, new TileLayer({
+        source: new XYZ({
+          url: 'rendering/ol/data/tiles/osm/{z}/{x}/{y}.png'
+        })
+      }));
+      map.once('postcompose', function(e) {
+        expect(e.frameState.layerStatesArray[1].hasOverlay).to.be(true);
+      });
+      map.once('rendercomplete', function() {
+        expect(document.querySelector('.ol-layers').childElementCount).to.be(1);
+        expect(document.querySelector('.ol-layer').childElementCount).to.be(2);
+        map.removeLayer(map.getLayers().item(1));
+        map.renderSync();
+        expect(document.querySelector('.ol-layer').childElementCount).to.be(1);
+        done();
+      });
+    });
+
   });
 
   describe('#prepareFrame', function() {
@@ -234,6 +256,8 @@ describe('ol.renderer.canvas.VectorTileLayer', function() {
       };
       const proj = getProjection('EPSG:3857');
       const frameState = {
+        layerStatesArray: [layer.getLayerState()],
+        layerIndex: 0,
         extent: proj.getExtent(),
         pixelRatio: 1,
         time: Date.now(),
@@ -247,13 +271,13 @@ describe('ol.renderer.canvas.VectorTileLayer', function() {
         usedTiles: {},
         wantedTiles: {}
       };
-      renderer.renderFrame(frameState, {});
+      renderer.renderFrame(frameState);
       const replayState = renderer.renderedTiles[0].getReplayState(layer);
       const revision = replayState.renderedTileRevision;
-      renderer.renderFrame(frameState, {});
+      renderer.renderFrame(frameState, null);
       expect(replayState.renderedTileRevision).to.be(revision);
       layer.changed();
-      renderer.renderFrame(frameState, {});
+      renderer.renderFrame(frameState, null);
       expect(replayState.renderedTileRevision).to.be(revision + 1);
       expect(Object.keys(renderer.tileListenerKeys_).length).to.be(0);
     });

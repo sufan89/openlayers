@@ -10,6 +10,7 @@ import {bbox as bboxStrategy} from '../../../../src/ol/loadingstrategy.js';
 import {get as getProjection, transformExtent, fromLonLat} from '../../../../src/ol/proj.js';
 import VectorSource from '../../../../src/ol/source/Vector.js';
 import GeoJSON from '../../../../src/ol/format/GeoJSON.js';
+import {getUid} from '../../../../src/ol/util.js';
 
 
 describe('ol.source.Vector', function() {
@@ -519,6 +520,59 @@ describe('ol.source.Vector', function() {
 
   });
 
+  describe('#getFeatureByUid()', function() {
+    let source;
+    beforeEach(function() {
+      source = new VectorSource();
+    });
+
+    it('returns a feature with an id', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      expect(source.getFeatureByUid(getUid(feature))).to.be(feature);
+    });
+
+    it('returns a feature without id', function() {
+      const feature = new Feature();
+      source.addFeature(feature);
+      expect(source.getFeatureByUid(getUid(feature))).to.be(feature);
+    });
+
+    it('returns null when no feature is found', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      const wrongId = 'abcd';
+      expect(source.getFeatureByUid(wrongId)).to.be(null);
+    });
+
+    it('returns null after removing feature', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      const uid = getUid(feature);
+      expect(source.getFeatureByUid(uid)).to.be(feature);
+      source.removeFeature(feature);
+      expect(source.getFeatureByUid(uid)).to.be(null);
+    });
+
+    it('returns null after clear', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      const uid = getUid(feature);
+      expect(source.getFeatureByUid(uid)).to.be(feature);
+      source.clear();
+      expect(source.getFeatureByUid(uid)).to.be(null);
+    });
+
+    it('returns null when no features are present', function() {
+      expect(source.getFeatureByUid('abcd')).to.be(null);
+    });
+
+  });
+
   describe('#loadFeatures', function() {
 
     describe('with the "bbox" strategy', function() {
@@ -531,8 +585,8 @@ describe('ol.source.Vector', function() {
           loader: function(extent) {
             setTimeout(function() {
               const lonLatExtent = transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
-              expect(lonLatExtent[0]).to.roughlyEqual(-99.261474609, 1e-9);
-              expect(lonLatExtent[2]).to.roughlyEqual(-95.965576171, 1e-9);
+              expect(lonLatExtent[0]).to.roughlyEqual(-99.259349218, 1e-9);
+              expect(lonLatExtent[2]).to.roughlyEqual(-95.963450781, 1e-9);
               done();
             }, 0);
           }
@@ -719,6 +773,19 @@ describe('ol.source.Vector', function() {
       expect(source.getFeatures().length).to.be(0);
     });
 
+    it('prevents adding two features with a duplicate id in the collection', function() {
+      source = new VectorSource({
+        features: new Collection()
+      });
+      const feature1 = new Feature();
+      feature1.setId('1');
+      const feature2 = new Feature();
+      feature2.setId('1');
+      const collection = source.getFeaturesCollection();
+      collection.push(feature1);
+      collection.push(feature2);
+      expect(collection.getLength()).to.be(1);
+    });
   });
 
   describe('with a collection of features plus spatial index', function() {

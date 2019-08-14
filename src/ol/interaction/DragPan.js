@@ -3,7 +3,7 @@
  */
 import {scale as scaleCoordinate, rotate as rotateCoordinate} from '../coordinate.js';
 import {easeOut} from '../easing.js';
-import {noModifierKeys} from '../events/condition.js';
+import {noModifierKeys, primaryAction} from '../events/condition.js';
 import {FALSE} from '../functions.js';
 import PointerInteraction, {centroid as centroidFromPointers} from './Pointer.js';
 
@@ -12,7 +12,7 @@ import PointerInteraction, {centroid as centroidFromPointers} from './Pointer.js
  * @typedef {Object} Options
  * @property {import("../events/condition.js").Condition} [condition] A function that takes an {@link module:ol/MapBrowserEvent~MapBrowserEvent} and returns a boolean
  * to indicate whether that event should be handled.
- * Default is {@link module:ol/events/condition~noModifierKeys}.
+ * Default is {@link module:ol/events/condition~noModifierKeys} and {@link module:ol/events/condition~primaryAction}.
  * @property {import("../Kinetic.js").default} [kinetic] Kinetic inertia to apply to the pan.
  */
 
@@ -59,7 +59,7 @@ class DragPan extends PointerInteraction {
      * @private
      * @type {import("../events/condition.js").Condition}
      */
-    this.condition_ = options.condition ? options.condition : noModifierKeys;
+    this.condition_ = options.condition ? options.condition : defaultCondition;
 
     /**
      * @private
@@ -73,6 +73,10 @@ class DragPan extends PointerInteraction {
    * @inheritDoc
    */
   handleDragEvent(mapBrowserEvent) {
+    if (!this.panning_) {
+      this.panning_ = true;
+      this.getMap().getView().beginInteraction();
+    }
     const targetPointers = this.targetPointers;
     const centroid = centroidFromPointers(targetPointers);
     if (targetPointers.length == this.lastPointersCount_) {
@@ -149,10 +153,6 @@ class DragPan extends PointerInteraction {
       if (view.getAnimating()) {
         view.cancelAnimations();
       }
-      if (!this.panning_) {
-        this.panning_ = true;
-        this.getMap().getView().beginInteraction();
-      }
       if (this.kinetic_) {
         this.kinetic_.begin();
       }
@@ -164,6 +164,14 @@ class DragPan extends PointerInteraction {
       return false;
     }
   }
+}
+
+/**
+ * @param {import("../MapBrowserPointerEvent.js").default} mapBrowserEvent Browser event.
+ * @return {boolean} Combined condition result.
+ */
+function defaultCondition(mapBrowserEvent) {
+  return noModifierKeys(mapBrowserEvent) && primaryAction(mapBrowserEvent);
 }
 
 export default DragPan;

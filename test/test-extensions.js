@@ -1,5 +1,4 @@
 import {equals} from '../src/ol/array.js';
-import {WEBGL} from '../src/ol/has.js';
 // avoid importing anything that results in an instanceof check
 // since these extensions are global, instanceof checks fail with modules
 
@@ -376,12 +375,6 @@ import {WEBGL} from '../src/ol/has.js';
     map.dispose();
   };
 
-  global.assertWebGL = function(map) {
-    if (!WEBGL) {
-      expect().fail('No WebGL support!');
-    }
-  };
-
   function resembleCanvas(canvas, referenceImage, tolerance, done) {
     if (showMap) {
       const wrapper = document.createElement('div');
@@ -443,21 +436,7 @@ import {WEBGL} from '../src/ol/has.js';
         return;
       }
 
-      let canvas;
-      if (event.glContext) {
-        const webglCanvas = event.glContext.getCanvas();
-        expect(webglCanvas).to.be.a(HTMLCanvasElement);
-
-        // draw the WebGL canvas on a new canvas, because we can not create
-        // a 2d context for that canvas because there is already a webgl context.
-        canvas = document.createElement('canvas');
-        canvas.width = webglCanvas.width;
-        canvas.height = webglCanvas.height;
-        canvas.getContext('2d').drawImage(webglCanvas, 0, 0,
-          webglCanvas.width, webglCanvas.height);
-      } else {
-        canvas = event.context.canvas;
-      }
+      const canvas = event.context.canvas;
       expect(canvas).to.be.a(HTMLCanvasElement);
 
       resembleCanvas(canvas, referenceImage, tolerance, done);

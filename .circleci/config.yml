@@ -28,6 +28,10 @@ jobs:
           command: npm test
 
       - store_artifacts:
+          path: coverage/
+          destination: coverage
+
+      - store_artifacts:
           path: rendering/cases/
           destination: rendering
 
@@ -38,3 +42,11 @@ jobs:
       - store_artifacts:
           path: build/examples
           destination: examples
+
+      - run:
+          name: Build API Docs
+          command: npm run apidoc
+
+      - store_artifacts:
+          path: build/apidoc
+          destination: apidoc

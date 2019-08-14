@@ -1,8 +1,8 @@
 /**
  * @module ol/control/OverviewMap
  */
-import Collection from '../Collection.js';
-import Map from '../Map.js';
+import PluggableMap from '../PluggableMap.js';
+import CompositeMapRenderer from '../renderer/Composite.js';
 import MapEventType from '../MapEventType.js';
 import MapProperty from '../MapProperty.js';
 import {getChangeEventType} from '../Object.js';
@@ -35,6 +35,13 @@ const MAX_RATIO = 0.75;
 const MIN_RATIO = 0.1;
 
 
+class ControlledMap extends PluggableMap {
+  createRenderer() {
+    return new CompositeMapRenderer(this);
+  }
+}
+
+
 /**
  * @typedef {Object} Options
  * @property {string} [className='ol-overviewmap'] CSS class name.
@@ -44,8 +51,8 @@ const MIN_RATIO = 0.1;
  * @property {boolean} [collapsible=true] Whether the control can be collapsed or not.
  * @property {string|HTMLElement} [label='»'] Text label to use for the collapsed
  * overviewmap button. Instead of text, also an element (e.g. a `span` element) can be used.
- * @property {Array<import("../layer/Layer.js").default>|import("../Collection.js").default<import("../layer/Layer.js").default>} layers
- * Layers for the overview map (mandatory).
+ * @property {Array<import("../layer/Layer.js").default>|import("../Collection.js").default<import("../layer/Layer.js").default>} [layers]
+ * Layers for the overview map.
  * @property {function(import("../MapEvent.js").default)} [render] Function called when the control
  * should be re-rendered. This is called in a `requestAnimationFrame` callback.
  * @property {HTMLElement|string} [target] Specify a target if you want the control
@@ -143,24 +150,18 @@ class OverviewMap extends Control {
     this.ovmapDiv_.className = 'ol-overviewmap-map';
 
     /**
-     * @type {import("../Map.js").default}
+     * @type {ControlledMap}
      * @private
      */
-    this.ovmap_ = new Map({
-      controls: new Collection(),
-      interactions: new Collection(),
+    this.ovmap_ = new ControlledMap({
       view: options.view
     });
     const ovmap = this.ovmap_;
 
     if (options.layers) {
-      /** @type {Array<import("../layer/Layer.js").default>} */ (options.layers).forEach(
-        /**
-         * @param {import("../layer/Layer.js").default} layer Layer.
-         */
-        (function(layer) {
-          ovmap.addLayer(layer);
-        }).bind(this));
+      options.layers.forEach(function(layer) {
+        ovmap.addLayer(layer);
+      });
     }
 
     const box = document.createElement('div');

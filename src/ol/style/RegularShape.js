@@ -30,10 +30,10 @@ import ImageStyle from './Image.js';
  * @property {import("../colorlike.js").ColorLike} [strokeStyle]
  * @property {number} strokeWidth
  * @property {number} size
- * @property {string} lineCap
+ * @property {CanvasLineCap} lineCap
  * @property {Array<number>} lineDash
  * @property {number} lineDashOffset
- * @property {string} lineJoin
+ * @property {CanvasLineJoin} lineJoin
  * @property {number} miterLimit
  */
 
@@ -142,7 +142,7 @@ class RegularShape extends ImageStyle {
      */
     this.hitDetectionImageSize_ = null;
 
-    this.render_();
+    this.render();
 
   }
 
@@ -301,9 +301,9 @@ class RegularShape extends ImageStyle {
   /**
    * @protected
    */
-  render_() {
-    let lineCap = '';
-    let lineJoin = '';
+  render() {
+    let lineCap = defaultLineCap;
+    let lineJoin = defaultLineJoin;
     let miterLimit = 0;
     let lineDash = null;
     let lineDashOffset = 0;
@@ -338,7 +338,6 @@ class RegularShape extends ImageStyle {
 
     let size = 2 * (this.radius_ + strokeWidth) + 1;
 
-    /** @type {RenderOptions} */
     const renderOptions = {
       strokeStyle: strokeStyle,
       strokeWidth: strokeWidth,
@@ -418,8 +417,8 @@ class RegularShape extends ImageStyle {
         context.setLineDash(renderOptions.lineDash);
         context.lineDashOffset = renderOptions.lineDashOffset;
       }
-      context.lineCap = /** @type {CanvasLineCap} */ (renderOptions.lineCap);
-      context.lineJoin = /** @type {CanvasLineJoin} */ (renderOptions.lineJoin);
+      context.lineCap = renderOptions.lineCap;
+      context.lineJoin = renderOptions.lineJoin;
       context.miterLimit = renderOptions.miterLimit;
       context.stroke();
     }

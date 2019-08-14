@@ -24,7 +24,7 @@ class CircleStyle extends RegularShape {
    */
   constructor(opt_options) {
 
-    const options = opt_options || /** @type {Options} */ ({});
+    const options = opt_options ? opt_options : {};
 
     super({
       points: Infinity,
@@ -53,13 +53,14 @@ class CircleStyle extends RegularShape {
   }
 
   /**
-  * Set the circle radius.
-  *
-  * @param {number} radius Circle radius.
-  * @api
-  */
+   * Set the circle radius.
+   *
+   * @param {number} radius Circle radius.
+   * @api
+   */
   setRadius(radius) {
     this.radius_ = radius;
+    this.render();
   }
 }
 

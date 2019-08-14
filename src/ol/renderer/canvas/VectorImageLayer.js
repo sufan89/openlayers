@@ -1,5 +1,5 @@
 /**
- * @module ol/renderer/canvas/ImageLayer
+ * @module ol/renderer/canvas/VectorImageLayer
  */
 import ImageCanvas from '../../ImageCanvas.js';
 import ViewHint from '../../ViewHint.js';
@@ -11,6 +11,7 @@ import CanvasVectorLayerRenderer from './VectorLayer.js';
 import {listen} from '../../events.js';
 import EventType from '../../events/EventType.js';
 import ImageState from '../../ImageState.js';
+import {renderDeclutterItems} from '../../render.js';
 
 /**
  * @classdesc
@@ -55,7 +56,14 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
   /**
    * @inheritDoc
    */
-  prepareFrame(frameState, layerState) {
+  handleFontsChanged() {
+    this.vectorRenderer_.handleFontsChanged();
+  }
+
+  /**
+   * @inheritDoc
+   */
+  prepareFrame(frameState) {
     const pixelRatio = frameState.pixelRatio;
     const viewState = frameState.viewState;
     const viewResolution = viewState.resolution;
@@ -70,8 +78,10 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
 
     if (!hints[ViewHint.ANIMATING] && !hints[ViewHint.INTERACTING] && !isEmpty(renderedExtent)) {
       let skippedFeatures = this.skippedFeatures_;
+      vectorRenderer.useContainer(null, null, 1);
       const context = vectorRenderer.context;
       const imageFrameState = /** @type {import("../../PluggableMap.js").FrameState} */ (assign({}, frameState, {
+        declutterItems: [],
         size: [
           getWidth(renderedExtent) / viewResolution,
           getHeight(renderedExtent) / viewResolution
@@ -82,10 +92,11 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
       }));
       const newSkippedFeatures = Object.keys(imageFrameState.skippedFeatureUids).sort();
       const image = new ImageCanvas(renderedExtent, viewResolution, pixelRatio, context.canvas, function(callback) {
-        if (vectorRenderer.prepareFrame(imageFrameState, layerState) &&
+        if (vectorRenderer.prepareFrame(imageFrameState) &&
               (vectorRenderer.replayGroupChanged ||
               !equals(skippedFeatures, newSkippedFeatures))) {
-          vectorRenderer.renderFrame(imageFrameState, layerState);
+          vectorRenderer.renderFrame(imageFrameState, null);
+          renderDeclutterItems(imageFrameState, null);
           skippedFeatures = newSkippedFeatures;
           callback();
         }
@@ -123,11 +134,11 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
   /**
    * @inheritDoc
    */
-  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback) {
+  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures) {
     if (this.vectorRenderer_) {
-      return this.vectorRenderer_.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback);
+      return this.vectorRenderer_.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures);
     } else {
-      return super.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback);
+      return super.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures);
     }
   }
 }

@@ -22,7 +22,7 @@ import {listen, unlistenByKey, unlisten} from './events.js';
 import EventType from './events/EventType.js';
 import {createEmpty, clone, createOrUpdateEmpty, equals, getForViewAndSize, isEmpty} from './extent.js';
 import {TRUE} from './functions.js';
-import {DEVICE_PIXEL_RATIO, TOUCH} from './has.js';
+import {DEVICE_PIXEL_RATIO, IMAGE_DECODE} from './has.js';
 import LayerGroup from './layer/Group.js';
 import {hasArea} from './size.js';
 import {DROP} from './structs/PriorityQueue.js';
@@ -39,9 +39,11 @@ import {create as createTransform, apply as applyTransform} from './transform.js
  * @property {boolean} animate
  * @property {import("./transform.js").Transform} coordinateToPixelTransform
  * @property {null|import("./extent.js").Extent} extent
+ * @property {Array<DeclutterItems>} declutterItems
  * @property {import("./coordinate.js").Coordinate} focus
  * @property {number} index
  * @property {Array<import("./layer/Layer.js").State>} layerStatesArray
+ * @property {number} layerIndex
  * @property {import("./transform.js").Transform} pixelToCoordinateTransform
  * @property {Array<PostRenderFunction>} postRenderFunctions
  * @property {import("./size.js").Size} size
@@ -50,6 +52,13 @@ import {create as createTransform, apply as applyTransform} from './transform.js
  * @property {!Object<string, Object<string, boolean>>} usedTiles
  * @property {Array<number>} viewHints
  * @property {!Object<string, Object<string, boolean>>} wantedTiles
+ */
+
+
+/**
+ * @typedef {Object} DeclutterItems
+ * @property {Array<*>} items Declutter items of an executor.
+ * @property {number} opacity Layer opacity.
  */
 
 
@@ -221,7 +230,7 @@ class PluggableMap extends BaseObject {
      * @type {!HTMLElement}
      */
     this.viewport_ = document.createElement('div');
-    this.viewport_.className = 'ol-viewport' + (TOUCH ? ' ol-touch' : '');
+    this.viewport_.className = 'ol-viewport' + ('ontouchstart' in window ? ' ol-touch' : '');
     this.viewport_.style.position = 'relative';
     this.viewport_.style.overflow = 'hidden';
     this.viewport_.style.width = '100%';
@@ -293,6 +302,16 @@ class PluggableMap extends BaseObject {
     this.interactions = optionsInternal.interactions || new Collection();
 
     /**
+     * @type {import("./events/Target.js").default}
+     */
+    this.labelCache_ = null;
+
+    /**
+     * @type {import("./events.js").EventsKey}
+     */
+    this.labelCacheListenerKey_;
+
+    /**
      * @type {Collection<import("./Overlay.js").default>}
      * @private
      */
@@ -309,7 +328,7 @@ class PluggableMap extends BaseObject {
      * @type {import("./renderer/Map.js").default}
      * @private
      */
-    this.renderer_ = this.createRenderer();
+    this.renderer_ = null;
 
     /**
      * @type {function(Event): void|undefined}
@@ -509,10 +528,6 @@ class PluggableMap extends BaseObject {
     if (this.handleResize_ !== undefined) {
       removeEventListener(EventType.RESIZE, this.handleResize_, false);
       this.handleResize_ = undefined;
-    }
-    if (this.animationDelayKey_) {
-      cancelAnimationFrame(this.animationDelayKey_);
-      this.animationDelayKey_ = undefined;
     }
     this.setTarget(null);
     super.disposeInternal();
@@ -763,6 +778,21 @@ class PluggableMap extends BaseObject {
   }
 
   /**
+   * @return {boolean} Layers have sources that are still loading.
+   */
+  getLoading() {
+    const layerStatesArray = this.getLayerGroup().getLayerStatesArray();
+    for (let i = 0, ii = layerStatesArray.length; i < ii; ++i) {
+      const layer = layerStatesArray[i].layer;
+      const source = /** @type {import("./layer/Layer.js").default} */ (layer).getSource();
+      if (source && source.loading) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Get the pixel for a coordinate.  This takes a coordinate in the map view
    * projection and returns the corresponding pixel.
    * @param {import("./coordinate.js").Coordinate} coordinate A map coordinate.
@@ -937,7 +967,7 @@ class PluggableMap extends BaseObject {
       if (frameState) {
         const hints = frameState.viewHints;
         if (hints[ViewHint.ANIMATING] || hints[ViewHint.INTERACTING]) {
-          const lowOnFrameBudget = Date.now() - frameState.time > 8;
+          const lowOnFrameBudget = !IMAGE_DECODE && Date.now() - frameState.time > 8;
           maxTotalLoading = lowOnFrameBudget ? 0 : 8;
           maxNewLoads = lowOnFrameBudget ? 0 : 2;
         }
@@ -949,7 +979,7 @@ class PluggableMap extends BaseObject {
     }
 
     if (frameState && this.hasListener(RenderEventType.RENDERCOMPLETE) && !frameState.animate &&
-        !this.tileQueue_.getTilesLoading() && !getLoading(this.getLayers().getArray())) {
+        !this.tileQueue_.getTilesLoading() && !this.getLoading()) {
       this.renderer_.dispatchRenderEvent(RenderEventType.RENDERCOMPLETE, frameState);
     }
 
@@ -993,7 +1023,14 @@ class PluggableMap extends BaseObject {
     }
 
     if (!targetElement) {
-      this.renderer_.removeLayerRenderers();
+      if (this.renderer_) {
+        this.renderer_.dispose();
+        this.renderer_ = null;
+      }
+      if (this.animationDelayKey_) {
+        cancelAnimationFrame(this.animationDelayKey_);
+        this.animationDelayKey_ = undefined;
+      }
       removeNode(this.viewport_);
       if (this.handleResize_ !== undefined) {
         removeEventListener(EventType.RESIZE, this.handleResize_, false);
@@ -1001,6 +1038,9 @@ class PluggableMap extends BaseObject {
       }
     } else {
       targetElement.appendChild(this.viewport_);
+      if (!this.renderer_) {
+        this.renderer_ = this.createRenderer();
+      }
 
       const keyboardEventTarget = !this.keyboardEventTarget_ ?
         targetElement : this.keyboardEventTarget_;
@@ -1011,7 +1051,7 @@ class PluggableMap extends BaseObject {
 
       if (!this.handleResize_) {
         this.handleResize_ = this.updateSize.bind(this);
-        addEventListener(EventType.RESIZE, this.handleResize_, false);
+        window.addEventListener(EventType.RESIZE, this.handleResize_, false);
       }
     }
 
@@ -1102,11 +1142,24 @@ class PluggableMap extends BaseObject {
   }
 
   /**
+   * Redraws all text after new fonts have loaded
+   */
+  redrawText() {
+    const layerStates = this.getLayerGroup().getLayerStatesArray();
+    for (let i = 0, ii = layerStates.length; i < ii; ++i) {
+      const layer = layerStates[i].layer;
+      if (layer.hasRenderer()) {
+        layer.getRenderer().handleFontsChanged();
+      }
+    }
+  }
+
+  /**
    * Request a map rendering (at the next animation frame).
    * @api
    */
   render() {
-    if (this.animationDelayKey_ === undefined) {
+    if (this.renderer_ && this.animationDelayKey_ === undefined) {
       this.animationDelayKey_ = requestAnimationFrame(this.animationDelay_);
     }
   }
@@ -1171,13 +1224,15 @@ class PluggableMap extends BaseObject {
     let frameState = null;
     if (size !== undefined && hasArea(size) && view && view.isDef()) {
       const viewHints = view.getHints(this.frameState_ ? this.frameState_.viewHints : undefined);
-      viewState = view.getState(this.pixelRatio_);
-      frameState = /** @type {FrameState} */ ({
+      viewState = view.getState();
+      frameState = {
         animate: false,
         coordinateToPixelTransform: this.coordinateToPixelTransform_,
+        declutterItems: previousFrameState ? previousFrameState.declutterItems : [],
         extent: extent,
         focus: this.focus_ ? this.focus_ : viewState.center,
         index: this.frameIndex_++,
+        layerIndex: 0,
         layerStatesArray: this.getLayerGroup().getLayerStatesArray(),
         pixelRatio: this.pixelRatio_,
         pixelToCoordinateTransform: this.pixelToCoordinateTransform_,
@@ -1190,7 +1245,7 @@ class PluggableMap extends BaseObject {
         viewState: viewState,
         viewHints: viewHints,
         wantedTiles: {}
-      });
+      };
     }
 
     if (frameState) {
@@ -1396,23 +1451,3 @@ function createOptionsInternal(options) {
 
 }
 export default PluggableMap;
-
-/**
- * @param  {Array<import("./layer/Base.js").default>} layers Layers.
- * @return {boolean} Layers have sources that are still loading.
- */
-function getLoading(layers) {
-  for (let i = 0, ii = layers.length; i < ii; ++i) {
-    const layer = layers[i];
-    if (typeof /** @type {?} */ (layer).getLayers === 'function') {
-      return getLoading(/** @type {LayerGroup} */ (layer).getLayers().getArray());
-    } else {
-      const source = /** @type {import("./layer/Layer.js").default} */ (
-        layer).getSource();
-      if (source && source.loading) {
-        return true;
-      }
-    }
-  }
-  return false;
-}

@@ -6,7 +6,7 @@ import {getChangeEventType} from '../Object.js';
 import {createCanvasContext2D} from '../dom.js';
 import VectorLayer from './Vector.js';
 import {assign} from '../obj.js';
-import WebGLPointsLayerRenderer from '../renderer/webgl/PointsLayer';
+import WebGLPointsLayerRenderer from '../renderer/webgl/PointsLayer.js';
 
 
 /**
@@ -27,7 +27,6 @@ import WebGLPointsLayerRenderer from '../renderer/webgl/PointsLayer';
  * of the heatmap, specified as an array of CSS color strings.
  * @property {number} [radius=8] Radius size in pixels.
  * @property {number} [blur=15] Blur size in pixels.
- * @property {number} [shadow=250] Shadow size in pixels.
  * @property {string|function(import("../Feature.js").default):number} [weight='weight'] The feature
  * attribute to use for the weight or a function that returns a weight from a feature. Weight values
  * should range from 0 to 1 (and values outside will be clamped to that range).
@@ -75,7 +74,6 @@ class Heatmap extends VectorLayer {
     delete baseOptions.gradient;
     delete baseOptions.radius;
     delete baseOptions.blur;
-    delete baseOptions.shadow;
     delete baseOptions.weight;
     super(baseOptions);
 
@@ -84,24 +82,6 @@ class Heatmap extends VectorLayer {
      * @type {HTMLCanvasElement}
      */
     this.gradient_ = null;
-
-    /**
-     * @private
-     * @type {number}
-     */
-    this.shadow_ = options.shadow !== undefined ? options.shadow : 250;
-
-    /**
-     * @private
-     * @type {string|undefined}
-     */
-    this.circleImage_ = undefined;
-
-    /**
-     * @private
-     * @type {Array<Array<import("../style/Style.js").default>>}
-     */
-    this.styleCache_ = null;
 
     listen(this,
       getChangeEventType(Property.GRADIENT),
@@ -203,42 +183,35 @@ class Heatmap extends VectorLayer {
         precision mediump float;
         attribute vec2 a_position;
         attribute vec2 a_texCoord;
-        attribute float a_rotateWithView;
         attribute vec2 a_offsets;
         attribute float a_opacity;
-        
+
         uniform mat4 u_projectionMatrix;
         uniform mat4 u_offsetScaleMatrix;
-        uniform mat4 u_offsetRotateMatrix;
         uniform float u_size;
-        
+
         varying vec2 v_texCoord;
         varying float v_opacity;
-        
+
         void main(void) {
-          mat4 offsetMatrix = u_offsetScaleMatrix;
-          if (a_rotateWithView == 1.0) {
-            offsetMatrix = u_offsetScaleMatrix * u_offsetRotateMatrix;
-          }
-          vec4 offsets = offsetMatrix * vec4(a_offsets, 0.0, 0.0);
+          vec4 offsets = u_offsetScaleMatrix * vec4(a_offsets, 0.0, 0.0);
           gl_Position = u_projectionMatrix * vec4(a_position, 0.0, 1.0) + offsets * u_size;
           v_texCoord = a_texCoord;
           v_opacity = a_opacity;
         }`,
       fragmentShader: `
         precision mediump float;
-        uniform float u_resolution;
         uniform float u_blurSlope;
-        
+
         varying vec2 v_texCoord;
         varying float v_opacity;
-        
+
         void main(void) {
           vec2 texCoord = v_texCoord * 2.0 - vec2(1.0, 1.0);
           float sqRadius = texCoord.x * texCoord.x + texCoord.y * texCoord.y;
           float value = (1.0 - sqrt(sqRadius)) * u_blurSlope;
           float alpha = smoothstep(0.0, 1.0, value) * v_opacity;
-          gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+          gl_FragColor = vec4(alpha, alpha, alpha, alpha);
         }`,
       uniforms: {
         u_size: function() {
@@ -246,10 +219,7 @@ class Heatmap extends VectorLayer {
         }.bind(this),
         u_blurSlope: function() {
           return this.get(Property.RADIUS) / Math.max(1, this.get(Property.BLUR));
-        }.bind(this),
-        u_resolution: function(frameState) {
-          return frameState.viewState.resolution;
-        }
+        }.bind(this)
       },
       postProcesses: [
         {
@@ -260,7 +230,6 @@ class Heatmap extends VectorLayer {
             uniform sampler2D u_gradientTexture;
 
             varying vec2 v_texCoord;
-            varying vec2 v_screenCoord;
 
             void main() {
               vec4 color = texture2D(u_image, v_texCoord);
@@ -273,9 +242,7 @@ class Heatmap extends VectorLayer {
           }
         }
       ],
-      opacityCallback: function(feature) {
-        return this.weightFunction_(feature);
-      }.bind(this)
+      opacityCallback: this.weightFunction_
     });
   }
 }

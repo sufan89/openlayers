@@ -2,12 +2,15 @@
  * @module ol/renderer/Composite
  */
 import {CLASS_UNSELECTABLE} from '../css.js';
-import {visibleAtResolution} from '../layer/Layer.js';
+import {inView} from '../layer/Layer.js';
 import RenderEvent from '../render/Event.js';
 import RenderEventType from '../render/EventType.js';
 import MapRenderer from './Map.js';
 import SourceState from '../source/State.js';
 import {replaceChildren} from '../dom.js';
+import {labelCache} from '../render/canvas.js';
+import EventType from '../events/EventType.js';
+import {listen, unlistenByKey} from '../events.js';
 
 
 /**
@@ -22,6 +25,11 @@ class CompositeMapRenderer extends MapRenderer {
    */
   constructor(map) {
     super(map);
+
+    /**
+     * @type {import("../events.js").EventsKey}
+     */
+    this.labelCacheKey_ = listen(labelCache, EventType.CLEAR, map.redrawText.bind(map));
 
     /**
      * @private
@@ -64,6 +72,11 @@ class CompositeMapRenderer extends MapRenderer {
     }
   }
 
+  disposeInternal() {
+    unlistenByKey(this.labelCacheKey_);
+    super.disposeInternal();
+  }
+
   /**
    * @inheritDoc
    */
@@ -79,26 +92,38 @@ class CompositeMapRenderer extends MapRenderer {
     this.calculateMatrices2D(frameState);
     this.dispatchRenderEvent(RenderEventType.PRECOMPOSE, frameState);
 
-    const layerStatesArray = frameState.layerStatesArray;
-    const viewResolution = frameState.viewState.resolution;
+    const layerStatesArray = frameState.layerStatesArray.sort(function(a, b) {
+      return a.zIndex - b.zIndex;
+    });
+    const viewState = frameState.viewState;
 
     this.children_.length = 0;
+    let hasOverlay = false;
+    let previousElement = null;
     for (let i = 0, ii = layerStatesArray.length; i < ii; ++i) {
       const layerState = layerStatesArray[i];
-      if (!visibleAtResolution(layerState, viewResolution) || layerState.sourceState != SourceState.READY) {
+      hasOverlay = hasOverlay || layerState.hasOverlay;
+      frameState.layerIndex = i;
+      if (!inView(layerState, viewState) ||
+        (layerState.sourceState != SourceState.READY && layerState.sourceState != SourceState.UNDEFINED)) {
         continue;
       }
 
       const layer = layerState.layer;
-      const element = layer.render(frameState);
-      if (element) {
-        const zIndex = layerState.zIndex;
-        if (zIndex !== element.style.zIndex) {
-          element.style.zIndex = zIndex;
-        }
+      const element = layer.render(frameState, previousElement);
+      if (!element) {
+        continue;
+      }
+      if ((element !== previousElement || i == ii - 1) && element.childElementCount === 2 && !hasOverlay) {
+        element.removeChild(element.lastElementChild);
+      }
+      if (element !== previousElement) {
         this.children_.push(element);
+        hasOverlay = false;
+        previousElement = element;
       }
     }
+    super.renderFrame(frameState);
 
     replaceChildren(this.element_, this.children_);
 
@@ -109,7 +134,6 @@ class CompositeMapRenderer extends MapRenderer {
       this.renderedVisible_ = true;
     }
 
-    this.scheduleRemoveUnusedLayerRenderers(frameState);
     this.scheduleExpireIconCache(frameState);
   }
 
@@ -118,7 +142,6 @@ class CompositeMapRenderer extends MapRenderer {
    */
   forEachLayerAtPixel(pixel, frameState, hitTolerance, callback, layerFilter) {
     const viewState = frameState.viewState;
-    const viewResolution = viewState.resolution;
 
     const layerStates = frameState.layerStatesArray;
     const numLayers = layerStates.length;
@@ -126,11 +149,8 @@ class CompositeMapRenderer extends MapRenderer {
     for (let i = numLayers - 1; i >= 0; --i) {
       const layerState = layerStates[i];
       const layer = layerState.layer;
-      if (visibleAtResolution(layerState, viewResolution) && layerFilter(layer)) {
-        const layerRenderer = this.getLayerRenderer(layer);
-        if (!layerRenderer) {
-          continue;
-        }
+      if (layer.hasRenderer() && inView(layerState, viewState) && layerFilter(layer)) {
+        const layerRenderer = layer.getRenderer();
         const data = layerRenderer.getDataAtPixel(pixel, frameState, hitTolerance);
         if (data) {
           const result = callback(layer, data);

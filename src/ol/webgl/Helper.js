@@ -2,33 +2,32 @@
  * @module ol/webgl/Helper
  */
 import {getUid} from '../util.js';
-import {EXTENSIONS as WEBGL_EXTENSIONS} from '../webgl.js';
 import Disposable from '../Disposable.js';
-import {includes} from '../array.js';
 import {listen, unlistenAll} from '../events.js';
 import {clear} from '../obj.js';
-import {ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, TEXTURE_2D, TEXTURE_WRAP_S, TEXTURE_WRAP_T} from '../webgl.js';
 import ContextEventType from '../webgl/ContextEventType.js';
 import {
+  compose as composeTransform,
   create as createTransform,
   reset as resetTransform,
   rotate as rotateTransform,
-  scale as scaleTransform,
-  translate as translateTransform
-} from '../transform';
-import {create, fromTransform} from '../vec/mat4';
-import WebGLPostProcessingPass from './PostProcessingPass';
-import {getContext} from '../webgl';
+  scale as scaleTransform
+} from '../transform.js';
+import {create, fromTransform} from '../vec/mat4.js';
+import WebGLPostProcessingPass from './PostProcessingPass.js';
+import {getContext, getSupportedExtensions} from '../webgl.js';
+import {includes} from '../array.js';
+import {assert} from '../asserts.js';
 
 
 /**
  * @typedef {Object} BufferCacheEntry
- * @property {import("./Buffer.js").default} buf
- * @property {WebGLBuffer} buffer
+ * @property {import("./Buffer.js").default} buffer
+ * @property {WebGLBuffer} webGlBuffer
  */
 
 /**
- * Shader types, either `FRAGMENT_SHADER` or `VERTEX_SHADER`
+ * Shader types, either `FRAGMENT_SHADER` or `VERTEX_SHADER`.
  * @enum {number}
  */
 export const ShaderType = {
@@ -37,9 +36,9 @@ export const ShaderType = {
 };
 
 /**
- * Uniform names used in the default shaders.
- * @const
- * @type {Object.<string,string>}
+ * Uniform names used in the default shaders: `PROJECTION_MATRIX`, `OFFSET_SCALE_MATRIX`.
+ * and `OFFSET_ROTATION_MATRIX`.
+ * @enum {string}
  */
 export const DefaultUniform = {
   PROJECTION_MATRIX: 'u_projectionMatrix',
@@ -48,9 +47,9 @@ export const DefaultUniform = {
 };
 
 /**
- * Attribute names used in the default shaders.
- * @const
- * @type {Object.<string,string>}
+ * Attribute names used in the default shaders: `POSITION`, `TEX_COORD`, `OPACITY`,
+ * `ROTATE_WITH_VIEW`, `OFFSETS` and `COLOR`
+ * @enum {string}
  */
 export const DefaultAttrib = {
   POSITION: 'a_position',
@@ -62,7 +61,7 @@ export const DefaultAttrib = {
 };
 
 /**
- * @typedef {number|Array<number>|HTMLCanvasElement|HTMLImageElement|ImageData} UniformLiteralValue
+ * @typedef {number|Array<number>|HTMLCanvasElement|HTMLImageElement|ImageData|import("../transform").Transform} UniformLiteralValue
  */
 
 /**
@@ -74,7 +73,7 @@ export const DefaultAttrib = {
 /**
  * @typedef {Object} PostProcessesOptions
  * @property {number} [scaleRatio] Scale ratio; if < 1, the post process will render to a texture smaller than
- * the main canvas that will then be sampled up (useful for saving resource on blur steps).
+ * the main canvas which will then be sampled up (useful for saving resource on blur steps).
  * @property {string} [vertexShader] Vertex shader source
  * @property {string} [fragmentShader] Fragment shader source
  * @property {Object.<string,UniformValue>} [uniforms] Uniform definitions for the post process step
@@ -82,7 +81,7 @@ export const DefaultAttrib = {
 
 /**
  * @typedef {Object} Options
- * @property {Object.<string,UniformValue>} [uniforms] Uniform definitions; property namesmust math the uniform
+ * @property {Object.<string,UniformValue>} [uniforms] Uniform definitions; property names must match the uniform
  * names in the provided or default shaders.
  * @property {Array<PostProcessesOptions>} [postProcesses] Post-processes definitions
  */
@@ -90,7 +89,7 @@ export const DefaultAttrib = {
 /**
  * @typedef {Object} UniformInternalDescription
  * @property {string} name Name
- * @property {UniformLiteralValue=} value Value
+ * @property {UniformValue=} value Value
  * @property {WebGLTexture} [texture] Texture
  * @private
  */
@@ -113,7 +112,7 @@ export const DefaultAttrib = {
  *
  *   * Varyings usually prefixed with `v_` are passed on to the fragment shader
  *
- *   Fragment shaders are used to control the actual color of the pixels rawn on screen. Their only output is `gl_FragColor`.
+ *   Fragment shaders are used to control the actual color of the pixels drawn on screen. Their only output is `gl_FragColor`.
  *
  *   Both shaders can take *uniforms* or *attributes* as input. Attributes are explained later. Uniforms are common, read-only values that
  *   can be changed at every frame and can be of type float, arrays of float or images.
@@ -150,17 +149,26 @@ export const DefaultAttrib = {
  *
  *   The {@link module:ol/webgl/PostProcessingPass~WebGLPostProcessingPass} class is used internally, refer to its documentation for more info.
  *
- * ### Binding WebGL buffers and flushing data into them:
+ * ### Binding WebGL buffers and flushing data into them
  *
- *   Data that must be passed to the GPU has to be transferred using `WebGLArrayBuffer` objects.
- *   A buffer has to be created only once, but must be bound everytime the data it holds is changed. Using `WebGLHelper.bindBuffer`
- *   will bind the buffer and flush the new data to the GPU.
+ *   Data that must be passed to the GPU has to be transferred using {@link module:ol/webgl/Buffer~WebGLArrayBuffer} objects.
+ *   A buffer has to be created only once, but must be bound every time the buffer content will be used for rendering.
+ *   This is done using {@link bindBuffer}.
+ *   When the buffer's array content has changed, the new data has to be flushed to the GPU memory; this is done using
+ *   {@link flushBufferData}. Note: this operation is expensive and should be done as infrequently as possible.
  *
- *   For now, the `WebGLHelper` class expects {@link module:ol/webgl/Buffer~WebGLArrayBuffer} objects.
+ *   When binding an array buffer, a `target` parameter must be given: it should be either {@link module:ol/webgl.ARRAY_BUFFER}
+ *   (if the buffer contains vertices data) or {@link module:ol/webgl.ELEMENT_ARRAY_BUFFER} (if the buffer contains indices data).
+ *
+ *   Examples below:
  *   ```js
  *   // at initialization phase
  *   this.verticesBuffer = new WebGLArrayBuffer([], DYNAMIC_DRAW);
  *   this.indicesBuffer = new WebGLArrayBuffer([], DYNAMIC_DRAW);
+ *
+ *   // when array values have changed
+ *   this.context.flushBufferData(ARRAY_BUFFER, this.verticesBuffer);
+ *   this.context.flushBufferData(ELEMENT_ARRAY_BUFFER, this.indicesBuffer);
  *
  *   // at rendering phase
  *   this.context.bindBuffer(ARRAY_BUFFER, this.verticesBuffer);
@@ -170,8 +178,8 @@ export const DefaultAttrib = {
  * ### Specifying attributes
  *
  *   The GPU only receives the data as arrays of numbers. These numbers must be handled differently depending on what it describes (position, texture coordinate...).
- *   Attributes are used to specify these uses. Use `WebGLHelper.enableAttributeArray` and either
- *   the default attribute names in {@link module:ol/webgl/Helper~DefaultAttrib} or custom ones.
+ *   Attributes are used to specify these uses. Use {@link enableAttributeArray} and either
+ *   the default attribute names in {@link module:ol/webgl/Helper.DefaultAttrib} or custom ones.
  *
  *   Please note that you will have to specify the type and offset of the attributes in the data array. You can refer to the documentation of [WebGLRenderingContext.vertexAttribPointer](https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/vertexAttribPointer) for more explanation.
  *   ```js
@@ -185,7 +193,7 @@ export const DefaultAttrib = {
  *
  * ### Rendering primitives
  *
- *   Once all the steps above have been achieved, rendering primitives to the screen is done using `WebGLHelper.prepareDraw` `drawElements` and `finalizeDraw`.
+ *   Once all the steps above have been achieved, rendering primitives to the screen is done using {@link prepareDraw}, {@link drawElements} and {@link finalizeDraw}.
  *   ```js
  *   // frame preparation step
  *   this.context.prepareDraw(frameState);
@@ -249,26 +257,13 @@ class WebGLHelper extends Disposable {
      */
     this.currentProgram_ = null;
 
-    /**
-     * @type {boolean}
-     */
-    this.hasOESElementIndexUint = includes(WEBGL_EXTENSIONS, 'OES_element_index_uint');
-
-    // use the OES_element_index_uint extension if available
-    if (this.hasOESElementIndexUint) {
-      gl.getExtension('OES_element_index_uint');
-    }
+    assert(includes(getSupportedExtensions(), 'OES_element_index_uint'), 63);
+    gl.getExtension('OES_element_index_uint');
 
     listen(this.canvas_, ContextEventType.LOST,
       this.handleWebGLContextLost, this);
     listen(this.canvas_, ContextEventType.RESTORED,
       this.handleWebGLContextRestored, this);
-
-    /**
-     * @private
-     * @type {import("../transform.js").Transform}
-     */
-    this.projectionMatrix_ = createTransform();
 
     /**
      * @private
@@ -307,12 +302,14 @@ class WebGLHelper extends Disposable {
      * @private
      */
     this.uniforms_ = [];
-    options.uniforms && Object.keys(options.uniforms).forEach(function(name) {
-      this.uniforms_.push({
-        name: name,
-        value: options.uniforms[name]
-      });
-    }.bind(this));
+    if (options.uniforms) {
+      for (const name in options.uniforms) {
+        this.uniforms_.push({
+          name: name,
+          value: options.uniforms[name]
+        });
+      }
+    }
 
     /**
      * An array of PostProcessingPass objects is kept in this variable, built from the steps provided in the
@@ -342,32 +339,33 @@ class WebGLHelper extends Disposable {
    * Just bind the buffer if it's in the cache. Otherwise create
    * the WebGL buffer, bind it, populate it, and add an entry to
    * the cache.
-   * TODO: improve this, the logic is unclear: we want A/ to bind a buffer and B/ to flush data in it
-   * @param {number} target Target.
-   * @param {import("./Buffer").default} buf Buffer.
+   * @param {import("./Buffer").default} buffer Buffer.
    * @api
    */
-  bindBuffer(target, buf) {
+  bindBuffer(buffer) {
     const gl = this.getGL();
-    const arr = buf.getArray();
-    const bufferKey = getUid(buf);
+    const bufferKey = getUid(buffer);
     let bufferCache = this.bufferCache_[bufferKey];
     if (!bufferCache) {
-      const buffer = gl.createBuffer();
+      const webGlBuffer = gl.createBuffer();
       bufferCache = this.bufferCache_[bufferKey] = {
-        buf: buf,
-        buffer: buffer
+        buffer: buffer,
+        webGlBuffer: webGlBuffer
       };
     }
-    gl.bindBuffer(target, bufferCache.buffer);
-    let /** @type {ArrayBufferView} */ arrayBuffer;
-    if (target == ARRAY_BUFFER) {
-      arrayBuffer = new Float32Array(arr);
-    } else if (target == ELEMENT_ARRAY_BUFFER) {
-      arrayBuffer = this.hasOESElementIndexUint ?
-        new Uint32Array(arr) : new Uint16Array(arr);
-    }
-    gl.bufferData(target, arrayBuffer, buf.getUsage());
+    gl.bindBuffer(buffer.getType(), bufferCache.webGlBuffer);
+  }
+
+  /**
+   * Update the data contained in the buffer array; this is required for the
+   * new data to be rendered
+   * @param {import("./Buffer").default} buffer Buffer.
+   * @api
+   */
+  flushBufferData(buffer) {
+    const gl = this.getGL();
+    this.bindBuffer(buffer);
+    gl.bufferData(buffer.getType(), buffer.getArray(), buffer.getUsage());
   }
 
   /**
@@ -434,6 +432,31 @@ class WebGLHelper extends Disposable {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
+    gl.useProgram(this.currentProgram_);
+    this.applyFrameState(frameState);
+    this.applyUniforms(frameState);
+  }
+
+  /**
+   * Clear the render target & bind it for future draw operations.
+   * This is similar to `prepareDraw`, only post processes will not be applied.
+   * Note: the whole viewport will be drawn to the render target, regardless of its size.
+   * @param {import("../PluggableMap.js").FrameState} frameState current frame state
+   * @param {import("./RenderTarget.js").default} renderTarget Render target to draw to
+   * @param {boolean} [opt_disableAlphaBlend] If true, no alpha blending will happen.
+   */
+  prepareDrawToRenderTarget(frameState, renderTarget, opt_disableAlphaBlend) {
+    const gl = this.getGL();
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, renderTarget.getFramebuffer());
+    gl.viewport(0, 0, frameState.size[0], frameState.size[1]);
+    gl.bindTexture(gl.TEXTURE_2D, renderTarget.getTexture());
+    gl.clearColor(0.0, 0.0, 0.0, 0.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, opt_disableAlphaBlend ? gl.ZERO : gl.ONE_MINUS_SRC_ALPHA);
+
+    gl.useProgram(this.currentProgram_);
     this.applyFrameState(frameState);
     this.applyUniforms(frameState);
   }
@@ -446,9 +469,8 @@ class WebGLHelper extends Disposable {
    */
   drawElements(start, end) {
     const gl = this.getGL();
-    const elementType = this.hasOESElementIndexUint ?
-      gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
-    const elementSize = this.hasOESElementIndexUint ? 4 : 2;
+    const elementType = gl.UNSIGNED_INT;
+    const elementSize = 4;
 
     const numItems = end - start;
     const offsetInBytes = start * elementSize;
@@ -492,14 +514,6 @@ class WebGLHelper extends Disposable {
   applyFrameState(frameState) {
     const size = frameState.size;
     const rotation = frameState.viewState.rotation;
-    const resolution = frameState.viewState.resolution;
-    const center = frameState.viewState.center;
-
-    // set the "uniform" values (coordinates 0,0 are the center of the view)
-    const projectionMatrix = resetTransform(this.projectionMatrix_);
-    scaleTransform(projectionMatrix, 2 / (resolution * size[0]), 2 / (resolution * size[1]));
-    rotateTransform(projectionMatrix, -rotation);
-    translateTransform(projectionMatrix, -center[0], -center[1]);
 
     const offsetScaleMatrix = resetTransform(this.offsetScaleMatrix_);
     scaleTransform(offsetScaleMatrix, 2 / size[0], 2 / size[1]);
@@ -509,7 +523,6 @@ class WebGLHelper extends Disposable {
       rotateTransform(offsetRotateMatrix, -rotation);
     }
 
-    this.setUniformMatrixValue(DefaultUniform.PROJECTION_MATRIX, fromTransform(this.tmpMat4_, projectionMatrix));
     this.setUniformMatrixValue(DefaultUniform.OFFSET_SCALE_MATRIX, fromTransform(this.tmpMat4_, offsetScaleMatrix));
     this.setUniformMatrixValue(DefaultUniform.OFFSET_ROTATION_MATRIX, fromTransform(this.tmpMat4_, offsetRotateMatrix));
   }
@@ -543,7 +556,9 @@ class WebGLHelper extends Disposable {
         // fill texture slots by increasing index
         gl.uniform1i(this.getUniformLocation(uniform.name), textureSlot++);
 
-      } else if (Array.isArray(value)) {
+      } else if (Array.isArray(value) && value.length === 6) {
+        this.setUniformMatrixValue(uniform.name, fromTransform(this.tmpMat4_, value));
+      } else if (Array.isArray(value) && value.length <= 4) {
         switch (value.length) {
           case 2:
             gl.uniform2f(this.getUniformLocation(uniform.name), value[0], value[1]);
@@ -668,6 +683,30 @@ class WebGLHelper extends Disposable {
   }
 
   /**
+   * Modifies the given transform to apply the rotation/translation/scaling of the given frame state.
+   * The resulting transform can be used to convert world space coordinates to view coordinates.
+   * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
+   * @param {import("../transform").Transform} transform Transform to update.
+   * @return {import("../transform").Transform} The updated transform object.
+   * @api
+   */
+  makeProjectionTransform(frameState, transform) {
+    const size = frameState.size;
+    const rotation = frameState.viewState.rotation;
+    const resolution = frameState.viewState.resolution;
+    const center = frameState.viewState.center;
+
+    resetTransform(transform);
+    composeTransform(transform,
+      0, 0,
+      2 / (resolution * size[0]), 2 / (resolution * size[1]),
+      -rotation,
+      -center[0], -center[1]
+    );
+    return transform;
+  }
+
+  /**
    * Give a value for a standard float uniform
    * @param {string} uniform Uniform name
    * @param {number} value Value
@@ -728,57 +767,36 @@ class WebGLHelper extends Disposable {
   // TODO: shutdown program
 
   /**
-   * TODO: these are not used and should be reworked
-   * @param {number=} opt_wrapS wrapS.
-   * @param {number=} opt_wrapT wrapT.
-   * @return {WebGLTexture} The texture.
+   * Will create or reuse a given webgl texture and apply the given size. If no image data
+   * specified, the texture will be empty, otherwise image data will be used and the `size`
+   * parameter will be ignored.
+   * Note: wrap parameters are set to clamp to edge, min filter is set to linear.
+   * @param {Array<number>} size Expected size of the texture
+   * @param {ImageData|HTMLImageElement|HTMLCanvasElement} [opt_data] Image data/object to bind to the texture
+   * @param {WebGLTexture} [opt_texture] Existing texture to reuse
+   * @return {WebGLTexture} The generated texture
+   * @api
    */
-  createTextureInternal(opt_wrapS, opt_wrapT) {
+  createTexture(size, opt_data, opt_texture) {
     const gl = this.getGL();
-    const texture = gl.createTexture();
+    const texture = opt_texture || gl.createTexture();
+
+    // set params & size
+    const level = 0;
+    const internalFormat = gl.RGBA;
+    const border = 0;
+    const format = gl.RGBA;
+    const type = gl.UNSIGNED_BYTE;
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    if (opt_data) {
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, format, type, opt_data);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, size[0], size[1], border, format, type, null);
+    }
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    if (opt_wrapS !== undefined) {
-      gl.texParameteri(
-        TEXTURE_2D, TEXTURE_WRAP_S, opt_wrapS);
-    }
-    if (opt_wrapT !== undefined) {
-      gl.texParameteri(
-        TEXTURE_2D, TEXTURE_WRAP_T, opt_wrapT);
-    }
-
-    return texture;
-  }
-
-  /**
-   * TODO: these are not used and should be reworked
-   * @param {number} width Width.
-   * @param {number} height Height.
-   * @param {number=} opt_wrapS wrapS.
-   * @param {number=} opt_wrapT wrapT.
-   * @return {WebGLTexture} The texture.
-   */
-  createEmptyTexture(width, height, opt_wrapS, opt_wrapT) {
-    const gl = this.getGL();
-    const texture = this.createTextureInternal(opt_wrapS, opt_wrapT);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    return texture;
-  }
-
-
-  /**
-   * TODO: these are not used and should be reworked
-   * @param {HTMLCanvasElement|HTMLImageElement|HTMLVideoElement} image Image.
-   * @param {number=} opt_wrapS wrapS.
-   * @param {number=} opt_wrapT wrapT.
-   * @return {WebGLTexture} The texture.
-   */
-  createTexture(image, opt_wrapS, opt_wrapT) {
-    const gl = this.getGL();
-    const texture = this.createTextureInternal(opt_wrapS, opt_wrapT);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
     return texture;
   }
 }

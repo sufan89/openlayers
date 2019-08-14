@@ -6,7 +6,6 @@ import {listen} from './events.js';
 import Event from './events/Event.js';
 import EventType from './events/EventType.js';
 import {circular as circularPolygon} from './geom/Polygon.js';
-import {GEOLOCATION} from './has.js';
 import {toRadians} from './math.js';
 import {get as getProjection, getTransformFromProjections, identityTransform} from './proj.js';
 
@@ -83,7 +82,7 @@ class GeolocationError extends Event {
  *       window.console.log(geolocation.getPosition());
  *     });
  *
- * @fires error
+ * @fires module:ol/events/Event~Event#event:error
  * @api
  */
 class Geolocation extends BaseObject {
@@ -160,7 +159,7 @@ class Geolocation extends BaseObject {
    * @private
    */
   handleTrackingChanged_() {
-    if (GEOLOCATION) {
+    if ('geolocation' in navigator) {
       const tracking = this.getTracking();
       if (tracking && this.watchId_ === undefined) {
         this.watchId_ = navigator.geolocation.watchPosition(
@@ -203,12 +202,6 @@ class Geolocation extends BaseObject {
     this.set(Property.ACCURACY_GEOMETRY, geometry);
     this.changed();
   }
-
-  /**
-   * Triggered when the Geolocation returns an error.
-   * @event error
-   * @api
-   */
 
   /**
    * @private

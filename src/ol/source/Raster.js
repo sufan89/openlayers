@@ -7,7 +7,7 @@ import {createCanvasContext2D} from '../dom.js';
 import {listen} from '../events.js';
 import Event from '../events/Event.js';
 import EventType from '../events/EventType.js';
-import {Processor} from 'pixelworks/lib/index';
+import {Processor} from 'pixelworks/lib/index.js';
 import {equals, getCenter, getHeight, getWidth} from '../extent.js';
 import ImageLayer from '../layer/Image.js';
 import TileLayer from '../layer/Tile.js';
@@ -214,6 +214,7 @@ class RasterSource extends ImageSource {
       extent: null,
       focus: null,
       index: 0,
+      layerIndex: 0,
       layerStatesArray: getLayerStatesArray(this.layers_),
       pixelRatio: 1,
       pixelToCoordinateTransform: createTransform(),
@@ -227,7 +228,8 @@ class RasterSource extends ImageSource {
         rotation: 0
       }),
       viewHints: [],
-      wantedTiles: {}
+      wantedTiles: {},
+      declutterItems: []
     };
 
     this.setAttributions(function(frameState) {
@@ -288,8 +290,7 @@ class RasterSource extends ImageSource {
     frameState.focus = center;
     frameState.size[0] = Math.round(getWidth(extent) / resolution);
     frameState.size[1] = Math.round(getHeight(extent) / resolution);
-    frameState.time = Date.now();
-    frameState.animate = false;
+    frameState.time = Infinity;
 
     const viewState = frameState.viewState;
     viewState.center = center;
@@ -358,7 +359,8 @@ class RasterSource extends ImageSource {
     const len = this.layers_.length;
     const imageDatas = new Array(len);
     for (let i = 0; i < len; ++i) {
-      const imageData = getImageData(this.layers_[i], frameState, frameState.layerStatesArray[i]);
+      frameState.layerIndex = i;
+      const imageData = getImageData(this.layers_[i], frameState);
       if (imageData) {
         imageDatas[i] = imageData;
       } else {
@@ -430,21 +432,24 @@ let sharedContext = null;
  * Get image data from a layer.
  * @param {import("../layer/Layer.js").default} layer Layer to render.
  * @param {import("../PluggableMap.js").FrameState} frameState The frame state.
- * @param {import("../layer/Layer.js").State} layerState The layer state.
  * @return {ImageData} The image data.
  */
-function getImageData(layer, frameState, layerState) {
+function getImageData(layer, frameState) {
   const renderer = layer.getRenderer();
   if (!renderer) {
     throw new Error('Unsupported layer type: ' + layer);
   }
 
-  if (!renderer.prepareFrame(frameState, layerState)) {
+  if (!renderer.prepareFrame(frameState)) {
     return null;
   }
   const width = frameState.size[0];
   const height = frameState.size[1];
-  const element = renderer.renderFrame(frameState, layerState);
+  const container = renderer.renderFrame(frameState, null);
+  let element;
+  if (container) {
+    element = container.firstElementChild;
+  }
   if (!(element instanceof HTMLCanvasElement)) {
     throw new Error('Unsupported rendered element: ' + element);
   }

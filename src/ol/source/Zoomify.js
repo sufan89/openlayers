@@ -26,6 +26,7 @@ const TierSizeCalculation = {
 export class CustomTile extends ImageTile {
 
   /**
+   * @param {number} tilePixelRatio Tile pixel ratio to display the tile
    * @param {import("../tilegrid/TileGrid.js").default} tileGrid TileGrid that the tile belongs to.
    * @param {import("../tilecoord.js").TileCoord} tileCoord Tile coordinate.
    * @param {TileState} state State.
@@ -34,8 +35,7 @@ export class CustomTile extends ImageTile {
    * @param {import("../Tile.js").LoadFunction} tileLoadFunction Tile load function.
    * @param {import("../Tile.js").Options=} opt_options Tile options.
    */
-  constructor(tileGrid, tileCoord, state, src, crossOrigin, tileLoadFunction, opt_options) {
-
+  constructor(tilePixelRatio, tileGrid, tileCoord, state, src, crossOrigin, tileLoadFunction, opt_options) {
     super(tileCoord, state, src, crossOrigin, tileLoadFunction, opt_options);
 
     /**
@@ -48,8 +48,11 @@ export class CustomTile extends ImageTile {
      * @private
      * @type {import("../size.js").Size}
      */
-    this.tileSize_ = toSize(tileGrid.getTileSize(tileCoord[0]));
-
+    this.tileSize_ = toSize(tileGrid.getTileSize(tileCoord[0])).map(
+      function(x) {
+        return x * tilePixelRatio;
+      }
+    );
   }
 
   /**
@@ -111,8 +114,8 @@ export class CustomTile extends ImageTile {
  * @property {number} [transition] Duration of the opacity transition for rendering.
  * To disable the opacity transition, pass `transition: 0`.
  * @property {number} [tileSize=256] Tile size. Same tile size is used for all zoom levels.
- * @property {number} [zDirection] Indicate which resolution should be used
- * by a renderer if the views resolution does not match any resolution of the tile source.
+ * @property {number} [zDirection=0] Indicate which resolution should be used
+ * by a renderer if the view resolution does not match any resolution of the tile source.
  * If 0, the nearest resolution will be used. If 1, the nearest lower resolution
  * will be used. If -1, the nearest higher resolution will be used.
  */
@@ -143,6 +146,7 @@ class Zoomify extends TileImage {
     const extent = options.extent || [0, -size[1], size[0], 0];
     const tierSizeInTiles = [];
     const tileSize = options.tileSize || DEFAULT_TILE_SIZE;
+    const tilePixelRatio = options.tilePixelRatio || 1;
     let tileSizeForTierSizeCalculation = tileSize;
 
     switch (tierSizeCalculation) {
@@ -242,14 +246,14 @@ class Zoomify extends TileImage {
 
     const tileUrlFunction = createFromTileUrlFunctions(urls.map(createFromTemplate));
 
-    const ZoomifyTileClass = CustomTile.bind(null, tileGrid);
+    const ZoomifyTileClass = CustomTile.bind(null, tilePixelRatio, tileGrid);
 
     super({
       attributions: options.attributions,
       cacheSize: options.cacheSize,
       crossOrigin: options.crossOrigin,
       projection: options.projection,
-      tilePixelRatio: options.tilePixelRatio,
+      tilePixelRatio: tilePixelRatio,
       reprojectionErrorThreshold: options.reprojectionErrorThreshold,
       tileClass: ZoomifyTileClass,
       tileGrid: tileGrid,

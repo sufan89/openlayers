@@ -63,10 +63,6 @@
   border: 1px solid black;
 }
 
-.ol-overlay-container {
-  will-change: left,right,top,bottom;
-}
-
 .ol-unsupported {
   display: none;
 }
@@ -126,11 +122,6 @@
 .ol-full-screen {
   right: .5em;
   top: .5em;
-}
-@media print {
-  .ol-control {
-    display: none;
-  }
 }
 
 .ol-control button {

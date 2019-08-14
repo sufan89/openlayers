@@ -1,4 +1,9 @@
-import WebGLHelper from '../../../../src/ol/webgl/Helper';
+import WebGLHelper from '../../../../src/ol/webgl/Helper.js';
+import {
+  create as createTransform,
+  rotate as rotateTransform,
+  scale as scaleTransform, translate as translateTransform
+} from '../../../../src/ol/transform.js';
 
 
 const VERTEX_SHADER = `
@@ -95,7 +100,8 @@ describe('ol.webgl.WebGLHelper', function() {
           uniforms: {
             u_test1: 42,
             u_test2: [1, 3],
-            u_test3: document.createElement('canvas')
+            u_test3: document.createElement('canvas'),
+            u_test4: createTransform()
           }
         });
         h.useProgram(h.getProgram(FRAGMENT_SHADER, VERTEX_SHADER));
@@ -116,13 +122,15 @@ describe('ol.webgl.WebGLHelper', function() {
       });
 
       it('has processed uniforms', function() {
-        expect(h.uniforms_.length).to.eql(3);
+        expect(h.uniforms_.length).to.eql(4);
         expect(h.uniforms_[0].name).to.eql('u_test1');
         expect(h.uniforms_[1].name).to.eql('u_test2');
         expect(h.uniforms_[2].name).to.eql('u_test3');
+        expect(h.uniforms_[3].name).to.eql('u_test4');
         expect(h.uniforms_[0].location).to.not.eql(-1);
         expect(h.uniforms_[1].location).to.not.eql(-1);
         expect(h.uniforms_[2].location).to.not.eql(-1);
+        expect(h.uniforms_[3].location).to.not.eql(-1);
         expect(h.uniforms_[2].texture).to.not.eql(undefined);
       });
     });
@@ -181,5 +189,105 @@ describe('ol.webgl.WebGLHelper', function() {
       });
     });
 
+    describe('#makeProjectionTransform', function() {
+      let h;
+      let frameState;
+      beforeEach(function() {
+        h = new WebGLHelper();
+
+        frameState = {
+          size: [100, 150],
+          viewState: {
+            rotation: 0.4,
+            resolution: 2,
+            center: [10, 20]
+          }
+        };
+      });
+
+      it('gives out the correct transform', function() {
+        const scaleX = 2 / frameState.size[0] / frameState.viewState.resolution;
+        const scaleY = 2 / frameState.size[1] / frameState.viewState.resolution;
+        const given = createTransform();
+        const expected = createTransform();
+        scaleTransform(expected, scaleX, scaleY);
+        rotateTransform(expected, -frameState.viewState.rotation);
+        translateTransform(expected, -frameState.viewState.center[0], -frameState.viewState.center[1]);
+
+        h.makeProjectionTransform(frameState, given);
+
+        expect(given.map(val => val.toFixed(15))).to.eql(expected.map(val => val.toFixed(15)));
+      });
+    });
+
+    describe('#createTexture', function() {
+      let h;
+      beforeEach(function() {
+        h = new WebGLHelper();
+      });
+
+      it('creates an empty texture from scratch', function() {
+        const width = 4;
+        const height = 4;
+        const t = h.createTexture([width, height]);
+        const gl = h.getGL();
+
+        const fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+        const data = new Uint8Array(width * height * 4);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        gl.deleteFramebuffer(fb);
+
+        expect(data[0]).to.eql(0);
+        expect(data[1]).to.eql(0);
+        expect(data[2]).to.eql(0);
+        expect(data[3]).to.eql(0);
+        expect(data[4]).to.eql(0);
+        expect(data[5]).to.eql(0);
+        expect(data[6]).to.eql(0);
+        expect(data[7]).to.eql(0);
+      });
+
+      it('creates a texture from image data', function() {
+        const width = 4;
+        const height = 4;
+        const canvas = document.createElement('canvas');
+        const image = canvas.getContext('2d').createImageData(width, height);
+        for (let i = 0; i < image.data.length; i += 4) {
+          image.data[i] = 100;
+          image.data[i + 1] = 150;
+          image.data[i + 2] = 200;
+          image.data[i + 3] = 250;
+        }
+        const t = h.createTexture([width, height], image);
+        const gl = h.getGL();
+
+        const fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+        const data = new Uint8Array(width * height * 4);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        gl.deleteFramebuffer(fb);
+
+        expect(data[0]).to.eql(100);
+        expect(data[1]).to.eql(150);
+        expect(data[2]).to.eql(200);
+        expect(data[3]).to.eql(250);
+        expect(data[4]).to.eql(100);
+        expect(data[5]).to.eql(150);
+        expect(data[6]).to.eql(200);
+        expect(data[7]).to.eql(250);
+      });
+
+      it('reuses a given texture', function() {
+        const width = 4;
+        const height = 4;
+        const gl = h.getGL();
+        const t1 = gl.createTexture();
+        const t2 = h.createTexture([width, height], undefined, t1);
+        expect(t1).to.be(t2);
+      });
+    });
   });
 });

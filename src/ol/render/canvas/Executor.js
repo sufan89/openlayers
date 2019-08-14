@@ -21,6 +21,7 @@ import {
 import {createCanvasContext2D} from '../../dom.js';
 import {labelCache, defaultTextAlign, measureTextHeight, measureAndCacheTextWidth, measureTextWidths} from '../canvas.js';
 import Disposable from '../../Disposable.js';
+import RBush from 'rbush';
 
 
 /**
@@ -58,15 +59,10 @@ class Executor extends Disposable {
    * @param {number} resolution Resolution.
    * @param {number} pixelRatio Pixel ratio.
    * @param {boolean} overlaps The replay can have overlapping geometries.
-   * @param {?} declutterTree Declutter tree.
    * @param {SerializableInstructions} instructions The serializable instructions
    */
-  constructor(resolution, pixelRatio, overlaps, declutterTree, instructions) {
+  constructor(resolution, pixelRatio, overlaps, instructions) {
     super();
-    /**
-     * @type {?}
-     */
-    this.declutterTree = declutterTree;
 
     /**
      * @protected
@@ -92,6 +88,11 @@ class Executor extends Disposable {
      * @type {boolean}
      */
     this.alignFill_;
+
+    /**
+     * @type {Array<*>}
+     */
+    this.declutterItems = [];
 
     /**
      * @protected
@@ -192,9 +193,10 @@ class Executor extends Disposable {
       const width = measureTextWidths(textState.font, lines, widths);
       const lineHeight = measureTextHeight(textState.font);
       const height = lineHeight * numLines;
-      const renderWidth = (width + strokeWidth);
+      const renderWidth = width + strokeWidth;
       const context = createCanvasContext2D(
-        Math.ceil(renderWidth * scale),
+        // make canvas 2 pixels wider to account for italic text width measurement errors
+        Math.ceil((renderWidth + 2) * scale),
         Math.ceil((height + strokeWidth) * scale));
       label = context.canvas;
       labelCache.set(key, label);
@@ -205,8 +207,8 @@ class Executor extends Disposable {
       if (strokeKey) {
         context.strokeStyle = strokeState.strokeStyle;
         context.lineWidth = strokeWidth;
-        context.lineCap = /** @type {CanvasLineCap} */ (strokeState.lineCap);
-        context.lineJoin = /** @type {CanvasLineJoin} */ (strokeState.lineJoin);
+        context.lineCap = strokeState.lineCap;
+        context.lineJoin = strokeState.lineJoin;
         context.miterLimit = strokeState.miterLimit;
         if (context.setLineDash && strokeState.lineDash.length) {
           context.setLineDash(strokeState.lineDash);
@@ -219,7 +221,7 @@ class Executor extends Disposable {
       context.textBaseline = 'middle';
       context.textAlign = 'center';
       const leftRight = (0.5 - align);
-      const x = align * label.width / scale + leftRight * strokeWidth;
+      const x = align * renderWidth + leftRight * strokeWidth;
       let i;
       if (strokeKey) {
         for (i = 0; i < numLines; ++i) {
@@ -360,10 +362,12 @@ class Executor extends Disposable {
       const declutterArgs = intersects ?
         [context, transform ? transform.slice(0) : null, opacity, image, originX, originY, w, h, x, y, scale] :
         null;
-      if (declutterArgs && fillStroke) {
-        declutterArgs.push(fillInstruction, strokeInstruction, p1, p2, p3, p4);
+      if (declutterArgs) {
+        if (fillStroke) {
+          declutterArgs.push(fillInstruction, strokeInstruction, p1, p2, p3, p4);
+        }
+        declutterGroup.push(declutterArgs);
       }
-      declutterGroup.push(declutterArgs);
     } else if (intersects) {
       if (fillStroke) {
         this.replayTextBackground_(context, p1, p2, p3, p4,
@@ -412,8 +416,11 @@ class Executor extends Disposable {
   /**
    * @param {import("../canvas.js").DeclutterGroup} declutterGroup Declutter group.
    * @param {import("../../Feature.js").FeatureLike} feature Feature.
+   * @param {number} opacity Layer opacity.
+   * @param {?} declutterTree Declutter tree.
+   * @return {?} Declutter tree.
    */
-  renderDeclutter_(declutterGroup, feature) {
+  renderDeclutter(declutterGroup, feature, opacity, declutterTree) {
     if (declutterGroup && declutterGroup.length > 5) {
       const groupCount = declutterGroup[4];
       if (groupCount == 1 || groupCount == declutterGroup.length - 5) {
@@ -425,17 +432,26 @@ class Executor extends Disposable {
           maxY: /** @type {number} */ (declutterGroup[3]),
           value: feature
         };
-        if (!this.declutterTree.collides(box)) {
-          this.declutterTree.insert(box);
+        if (!declutterTree) {
+          declutterTree = new RBush(9);
+        }
+        if (!declutterTree.collides(box)) {
+          declutterTree.insert(box);
           for (let j = 5, jj = declutterGroup.length; j < jj; ++j) {
             const declutterData = /** @type {Array} */ (declutterGroup[j]);
-            if (declutterData) {
-              if (declutterData.length > 11) {
-                this.replayTextBackground_(declutterData[0],
-                  declutterData[13], declutterData[14], declutterData[15], declutterData[16],
-                  declutterData[11], declutterData[12]);
-              }
-              drawImage.apply(undefined, declutterData);
+            const context = declutterData[0];
+            const currentAlpha = context.globalAlpha;
+            if (currentAlpha !== opacity) {
+              context.globalAlpha = opacity;
+            }
+            if (declutterData.length > 11) {
+              this.replayTextBackground_(declutterData[0],
+                declutterData[13], declutterData[14], declutterData[15], declutterData[16],
+                declutterData[11], declutterData[12]);
+            }
+            drawImage.apply(undefined, declutterData);
+            if (currentAlpha !== opacity) {
+              context.globalAlpha = currentAlpha;
             }
           }
         }
@@ -443,6 +459,7 @@ class Executor extends Disposable {
         createOrUpdateEmpty(declutterGroup);
       }
     }
+    return declutterTree;
   }
 
   /**
@@ -464,7 +481,9 @@ class Executor extends Disposable {
     const baseline = TEXT_ALIGN[textState.textBaseline || defaultTextBaseline];
     const strokeWidth = strokeState && strokeState.lineWidth ? strokeState.lineWidth : 0;
 
-    const anchorX = align * label.width / pixelRatio + 2 * (0.5 - align) * strokeWidth;
+    // Remove the 2 pixels we added in getTextImage() for the anchor
+    const width = label.width / pixelRatio - 2 * textState.scale;
+    const anchorX = align * width + 2 * (0.5 - align) * strokeWidth;
     const anchorY = baseline * label.height / pixelRatio + 2 * (0.5 - baseline) * strokeWidth;
 
     return {
@@ -497,6 +516,7 @@ class Executor extends Disposable {
     featureCallback,
     opt_hitExtent
   ) {
+    this.declutterItems.length = 0;
     /** @type {Array<number>} */
     let pixelCoordinates;
     if (this.pixelCoordinates_ && equals(transform, this.renderedTransform_)) {
@@ -670,7 +690,7 @@ class Executor extends Disposable {
               backgroundFill ? /** @type {Array<*>} */ (lastFillInstruction) : null,
               backgroundStroke ? /** @type {Array<*>} */ (lastStrokeInstruction) : null);
           }
-          this.renderDeclutter_(declutterGroup, feature);
+          this.declutterItems.push(this, declutterGroup, feature);
           ++i;
           break;
         case CanvasInstruction.DRAW_CHARS:
@@ -739,7 +759,7 @@ class Executor extends Disposable {
               }
             }
           }
-          this.renderDeclutter_(declutterGroup, feature);
+          this.declutterItems.push(this, declutterGroup, feature);
           ++i;
           break;
         case CanvasInstruction.END_GEOMETRY:

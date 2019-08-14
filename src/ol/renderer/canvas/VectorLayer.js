@@ -3,13 +3,9 @@
  */
 import {getUid} from '../../util.js';
 import ViewHint from '../../ViewHint.js';
-import {listen, unlisten} from '../../events.js';
-import EventType from '../../events/EventType.js';
-import rbush from 'rbush';
 import {buffer, createEmpty, containsExtent, getWidth} from '../../extent.js';
-import {labelCache} from '../../render/canvas.js';
 import CanvasBuilderGroup from '../../render/canvas/BuilderGroup.js';
-import ExecutorGroup from '../../render/canvas/ExecutorGroup.js';
+import ExecutorGroup, {replayDeclutter} from '../../render/canvas/ExecutorGroup.js';
 import CanvasLayerRenderer from './Layer.js';
 import {defaultOrder as defaultRenderOrder, getTolerance as getRenderTolerance, getSquaredTolerance as getSquaredRenderTolerance, renderFeature} from '../vector.js';
 import {toString as transformToString, makeScale, makeInverse} from '../../transform.js';
@@ -27,12 +23,6 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
   constructor(vectorLayer) {
 
     super(vectorLayer);
-
-    /**
-     * Declutter tree.
-     * @private
-     */
-    this.declutterTree_ = vectorLayer.getDeclutter() ? rbush(9, undefined) : null;
 
     /**
      * @private
@@ -75,38 +65,41 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
      * @type {boolean}
      */
     this.replayGroupChanged = true;
-
-    listen(labelCache, EventType.CLEAR, this.handleFontsChanged_, this);
   }
 
   /**
    * @inheritDoc
    */
-  disposeInternal() {
-    unlisten(labelCache, EventType.CLEAR, this.handleFontsChanged_, this);
-    super.disposeInternal();
+  useContainer(target, transform, opacity) {
+    if (opacity < 1) {
+      target = null;
+    }
+    super.useContainer(target, transform, opacity);
   }
 
   /**
    * @inheritDoc
    */
-  renderFrame(frameState, layerState) {
+  renderFrame(frameState, target) {
+
+    const pixelRatio = frameState.pixelRatio;
+    const layerState = frameState.layerStatesArray[frameState.layerIndex];
+
+    // set forward and inverse pixel transforms
+    makeScale(this.pixelTransform, 1 / pixelRatio, 1 / pixelRatio);
+    makeInverse(this.inversePixelTransform, this.pixelTransform);
+
+    this.useContainer(target, this.pixelTransform, layerState.opacity);
     const context = this.context;
     const canvas = context.canvas;
 
     const replayGroup = this.replayGroup_;
     if (!replayGroup || replayGroup.isEmpty()) {
-      if (canvas.width > 0) {
+      if (!this.containerReused && canvas.width > 0) {
         canvas.width = 0;
       }
-      return canvas;
+      return this.container;
     }
-
-    const pixelRatio = frameState.pixelRatio;
-
-    // set forward and inverse pixel transforms
-    makeScale(this.pixelTransform_, 1 / pixelRatio, 1 / pixelRatio);
-    makeInverse(this.inversePixelTransform_, this.pixelTransform_);
 
     // resize and clear
     const width = Math.round(frameState.size[0] * pixelRatio);
@@ -114,11 +107,11 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
     if (canvas.width != width || canvas.height != height) {
       canvas.width = width;
       canvas.height = height;
-      const canvasTransform = transformToString(this.pixelTransform_);
+      const canvasTransform = transformToString(this.pixelTransform);
       if (canvas.style.transform !== canvasTransform) {
         canvas.style.transform = canvasTransform;
       }
-    } else {
+    } else if (!this.containerReused) {
       context.clearRect(0, 0, width, height);
     }
 
@@ -138,17 +131,14 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
       this.clip(context, frameState, clipExtent);
     }
 
-    if (this.declutterTree_) {
-      this.declutterTree_.clear();
-    }
-
 
     const viewHints = frameState.viewHints;
     const snapToPixel = !(viewHints[ViewHint.ANIMATING] || viewHints[ViewHint.INTERACTING]);
 
     const transform = this.getRenderTransform(frameState, width, height, 0);
     const skippedFeatureUids = layerState.managed ? frameState.skippedFeatureUids : {};
-    replayGroup.execute(context, transform, rotation, skippedFeatureUids, snapToPixel);
+    const declutterReplays = /** @type {import("../../layer/Vector.js").default} */ (this.getLayer()).getDeclutter() ? {} : null;
+    replayGroup.execute(context, transform, rotation, skippedFeatureUids, snapToPixel, undefined, declutterReplays);
 
     if (vectorSource.getWrapX() && projection.canWrapX() && !containsExtent(projectionExtent, extent)) {
       let startX = extent[0];
@@ -159,7 +149,7 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
         --world;
         offsetX = worldWidth * world;
         const transform = this.getRenderTransform(frameState, width, height, offsetX);
-        replayGroup.execute(context, transform, rotation, skippedFeatureUids, snapToPixel);
+        replayGroup.execute(context, transform, rotation, skippedFeatureUids, snapToPixel, undefined, declutterReplays);
         startX += worldWidth;
       }
       world = 0;
@@ -168,9 +158,14 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
         ++world;
         offsetX = worldWidth * world;
         const transform = this.getRenderTransform(frameState, width, height, offsetX);
-        replayGroup.execute(context, transform, rotation, skippedFeatureUids, snapToPixel);
+        replayGroup.execute(context, transform, rotation, skippedFeatureUids, snapToPixel, undefined, declutterReplays);
         startX -= worldWidth;
       }
+    }
+    if (declutterReplays) {
+      const viewHints = frameState.viewHints;
+      const hifi = !(viewHints[ViewHint.ANIMATING] || viewHints[ViewHint.INTERACTING]);
+      replayDeclutter(declutterReplays, context, rotation, 1, hifi, frameState.declutterItems);
     }
 
     if (clipped) {
@@ -180,23 +175,24 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
     this.postRender(context, frameState);
 
     const opacity = layerState.opacity;
-    if (opacity !== parseFloat(canvas.style.opacity)) {
-      canvas.style.opacity = opacity;
+    const container = this.container;
+    if (opacity !== parseFloat(container.style.opacity)) {
+      container.style.opacity = opacity === 1 ? '' : opacity;
     }
 
-    return canvas;
+    return this.container;
   }
 
   /**
    * @inheritDoc
    */
-  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, thisArg) {
+  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures) {
     if (!this.replayGroup_) {
       return undefined;
     } else {
       const resolution = frameState.viewState.resolution;
       const rotation = frameState.viewState.rotation;
-      const layer = this.getLayer();
+      const layer = /** @type {import("../../layer/Vector").default} */ (this.getLayer());
       /** @type {!Object<string, boolean>} */
       const features = {};
       const result = this.replayGroup_.forEachFeatureAtCoordinate(coordinate, resolution, rotation, hitTolerance, {},
@@ -208,17 +204,17 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
           const key = getUid(feature);
           if (!(key in features)) {
             features[key] = true;
-            return callback.call(thisArg, feature, layer);
+            return callback(feature, layer);
           }
-        }, null);
+        }, layer.getDeclutter() ? declutteredFeatures : null);
       return result;
     }
   }
 
   /**
-   * @param {import("../../events/Event.js").default} event Event.
+   * @inheritDoc
    */
-  handleFontsChanged_(event) {
+  handleFontsChanged() {
     const layer = this.getLayer();
     if (layer.getVisible() && this.replayGroup_) {
       layer.changed();
@@ -237,7 +233,7 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
   /**
    * @inheritDoc
    */
-  prepareFrame(frameState, layerState) {
+  prepareFrame(frameState) {
     const vectorLayer = /** @type {import("../../layer/Vector.js").default} */ (this.getLayer());
     const vectorSource = vectorLayer.getSource();
 
@@ -299,7 +295,7 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
 
     const replayGroup = new CanvasBuilderGroup(
       getRenderTolerance(resolution, pixelRatio), extent, resolution,
-      pixelRatio, !!this.declutterTree_);
+      pixelRatio, vectorLayer.getDeclutter());
 
     vectorSource.loadFeatures(extent, resolution, projection);
 
@@ -339,7 +335,7 @@ class CanvasVectorLayerRenderer extends CanvasLayerRenderer {
 
     const replayGroupInstructions = replayGroup.finish();
     const executorGroup = new ExecutorGroup(extent, resolution,
-      pixelRatio, vectorSource.getOverlaps(), this.declutterTree_,
+      pixelRatio, vectorSource.getOverlaps(),
       replayGroupInstructions, vectorLayer.getRenderBuffer());
 
     this.renderedResolution_ = resolution;

@@ -29,10 +29,9 @@ class LayerRenderer extends Observable {
    * Determine whether render should be called.
    * @abstract
    * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
-   * @param {import("../layer/Layer.js").State} layerState Layer state.
    * @return {boolean} Layer is ready to be rendered.
    */
-  prepareFrame(frameState, layerState) {
+  prepareFrame(frameState) {
     return abstract();
   }
 
@@ -40,10 +39,10 @@ class LayerRenderer extends Observable {
    * Render the layer.
    * @abstract
    * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
-   * @param {import("../layer/Layer.js").State} layerState Layer state.
+   * @param {HTMLElement} target Target that may be used to render content to.
    * @return {HTMLElement} The rendered element.
    */
-  renderFrame(frameState, layerState) {
+  renderFrame(frameState, target) {
     return abstract();
   }
 
@@ -89,10 +88,11 @@ class LayerRenderer extends Observable {
    * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
    * @param {number} hitTolerance Hit tolerance in pixels.
    * @param {function(import("../Feature.js").FeatureLike, import("../layer/Layer.js").default): T} callback Feature callback.
+   * @param {Array<import("../Feature.js").FeatureLike>} declutteredFeatures Decluttered features.
    * @return {T|void} Callback result.
    * @template T
    */
-  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback) {}
+  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures) {}
 
   /**
    * @abstract
@@ -115,6 +115,12 @@ class LayerRenderer extends Observable {
   }
 
   /**
+   * Perform action necessary to get the layer rendered after new fonts have loaded
+   * @abstract
+   */
+  handleFontsChanged() {}
+
+  /**
    * Handle changes in image state.
    * @param {import("../events/Event.js").default} event Image change event.
    * @private
@@ -124,15 +130,6 @@ class LayerRenderer extends Observable {
     if (image.getState() === ImageState.LOADED) {
       this.renderIfReadyAndVisible();
     }
-  }
-
-  /**
-   * @param {import("../coordinate.js").Coordinate} coordinate Coordinate.
-   * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
-   * @return {boolean} Is there a feature at the given coordinate?
-   */
-  hasFeatureAtCoordinate(coordinate, frameState) {
-    return false;
   }
 
   /**

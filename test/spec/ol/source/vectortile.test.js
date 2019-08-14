@@ -5,7 +5,7 @@ import VectorTile from '../../../../src/ol/VectorTile.js';
 import GeoJSON from '../../../../src/ol/format/GeoJSON.js';
 import MVT from '../../../../src/ol/format/MVT.js';
 import VectorTileLayer from '../../../../src/ol/layer/VectorTile.js';
-import {get as getProjection} from '../../../../src/ol/proj.js';
+import {get as getProjection, get} from '../../../../src/ol/proj.js';
 import VectorTileSource from '../../../../src/ol/source/VectorTile.js';
 import {createXYZ} from '../../../../src/ol/tilegrid.js';
 import TileGrid from '../../../../src/ol/tilegrid/TileGrid.js';
@@ -26,6 +26,10 @@ describe('ol.source.VectorTile', function() {
       expect(source.format_).to.equal(format);
     });
 
+    it('sets the default zDirection on the instance', function() {
+      expect(source.zDirection).to.be(1);
+    });
+
     it('uses ol.VectorTile as default tileClass', function() {
       expect(source.tileClass).to.equal(VectorTile);
     });
@@ -38,17 +42,21 @@ describe('ol.source.VectorTile', function() {
   });
 
   describe('#getTile()', function() {
+
     it('creates a tile with the correct tile class', function() {
       tile = source.getTile(0, 0, 0, 1, getProjection('EPSG:3857'));
       expect(tile).to.be.a(VectorRenderTile);
     });
+
     it('sets the correct tileCoord on the created tile', function() {
       expect(tile.getTileCoord()).to.eql([0, 0, 0]);
     });
+
     it('fetches tile from cache when requested again', function() {
       expect(source.getTile(0, 0, 0, 1, getProjection('EPSG:3857')))
         .to.equal(tile);
     });
+
     it('loads source tiles', function(done) {
       const source = new VectorTileSource({
         format: new GeoJSON(),
@@ -65,6 +73,41 @@ describe('ol.source.VectorTile', function() {
           done();
         }
       });
+    });
+
+    it('handles empty tiles', function(done) {
+      const source = new VectorTileSource({
+        format: new GeoJSON(),
+        url: ''
+      });
+      const tile = source.getTile(0, 0, 0, 1, source.getProjection());
+
+      const key = listen(tile, 'change', function(e) {
+        unlistenByKey(key);
+        expect(tile.getState()).to.be(TileState.EMPTY);
+        done();
+      });
+      tile.load();
+    });
+
+    it('creates empty tiles outside the source extent', function() {
+      const fullExtent = get('EPSG:3857').getExtent();
+      const source = new VectorTileSource({
+        extent: [fullExtent[0], fullExtent[1], 0, 0]
+      });
+      const tile = source.getTile(1, 1, 1, 1, source.getProjection());
+      expect(tile.getState()).to.be(TileState.EMPTY);
+    });
+
+    it('creates new tile when source key changes', function() {
+      source.setKey('key1');
+      const tile1 = source.getTile(0, 0, 0, 1, getProjection('EPSG:3857'));
+      const tile2 = source.getTile(0, 0, 0, 1, getProjection('EPSG:3857'));
+      source.setKey('key2');
+      const tile3 = source.getTile(0, 0, 0, 1, getProjection('EPSG:3857'));
+      expect(tile1).to.equal(tile2);
+      expect(tile1.key).to.be('key1');
+      expect(tile3.key).to.be('key2');
     });
 
   });

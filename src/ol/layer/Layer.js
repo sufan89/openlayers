@@ -10,6 +10,10 @@ import {assign} from '../obj.js';
 import RenderEventType from '../render/EventType.js';
 import SourceState from '../source/State.js';
 
+/**
+ * @typedef {function(import("../PluggableMap.js").FrameState):HTMLElement} RenderFunction
+ */
+
 
 /**
  * @typedef {Object} Options
@@ -29,6 +33,8 @@ import SourceState from '../source/State.js';
  * the source can be set by calling {@link module:ol/layer/Layer#setSource layer.setSource(source)} after
  * construction.
  * @property {import("../PluggableMap.js").default} [map] Map.
+ * @property {RenderFunction} [render] Render function. Takes the frame state as input and is expected to return an
+ * HTML element. Will overwrite the default rendering for the layer.
  */
 
 
@@ -39,16 +45,21 @@ import SourceState from '../source/State.js';
  * @property {SourceState} sourceState
  * @property {boolean} visible
  * @property {boolean} managed
+ * @property {boolean} hasOverlay Set by the renderer when an overlay for points and text is used.
  * @property {import("../extent.js").Extent} [extent]
  * @property {number} zIndex
  * @property {number} maxResolution
  * @property {number} minResolution
+ * @property {number} minZoom
+ * @property {number} maxZoom
  */
 
 /**
  * @classdesc
- * Abstract base class; normally only used for creating subclasses and not
- * instantiated in apps.
+ * Base class from which all layer types are derived. This should only be instantiated
+ * in the case where a custom layer is be added to the map with a custom `render` function.
+ * Such a function can be specified in the `options` object, and is expected to return an HTML element.
+ *
  * A visual representation of raster or vector map data.
  * Layers group together those properties that pertain to how the data is to be
  * displayed, irrespective of the source of that data.
@@ -64,6 +75,7 @@ import SourceState from '../source/State.js';
  * @fires import("../render/Event.js").RenderEvent#postrender
  *
  * @template {import("../source/Source.js").default} SourceType
+ * @api
  */
 class Layer extends BaseLayer {
   /**
@@ -99,6 +111,11 @@ class Layer extends BaseLayer {
      * @type {import("../renderer/Layer.js").default}
      */
     this.renderer_ = null;
+
+    // Overwrite default render method with a custom one
+    if (options.render) {
+      this.render = options.render;
+    }
 
     if (options.map) {
       this.setMap(options.map);
@@ -175,13 +192,15 @@ class Layer extends BaseLayer {
    * In charge to manage the rendering of the layer. One layer type is
    * bounded with one layer renderer.
    * @param {?import("../PluggableMap.js").FrameState} frameState Frame state.
+   * @param {HTMLElement} target Target which the renderer may (but need not) use
+   * for rendering its content.
    * @return {HTMLElement} The rendered element.
    */
-  render(frameState) {
+  render(frameState, target) {
     const layerRenderer = this.getRenderer();
-    const layerState = this.getLayerState();
-    if (layerRenderer.prepareFrame(frameState, layerState)) {
-      return layerRenderer.renderFrame(frameState, layerState);
+
+    if (layerRenderer.prepareFrame(frameState)) {
+      return layerRenderer.renderFrame(frameState, target);
     }
   }
 
@@ -212,12 +231,7 @@ class Layer extends BaseLayer {
     if (map) {
       this.mapPrecomposeKey_ = listen(map, RenderEventType.PRECOMPOSE, function(evt) {
         const renderEvent = /** @type {import("../render/Event.js").default} */ (evt);
-        const layerState = this.getLayerState();
-        layerState.managed = false;
-        if (this.getZIndex() === undefined) {
-          layerState.zIndex = Infinity;
-        }
-        renderEvent.frameState.layerStatesArray.push(layerState);
+        renderEvent.frameState.layerStatesArray.push(this.getLayerState(false));
       }, this);
       this.mapRenderKey_ = listen(this, EventType.CHANGE, map.render, map);
       this.changed();
@@ -246,6 +260,13 @@ class Layer extends BaseLayer {
   }
 
   /**
+   * @return {boolean} The layer has a renderer.
+   */
+  hasRenderer() {
+    return !!this.renderer_;
+  }
+
+  /**
    * Create a renderer for this layer.
    * @return {import("../renderer/Layer.js").default} A layer renderer.
    * @protected
@@ -258,17 +279,22 @@ class Layer extends BaseLayer {
 
 
 /**
- * Return `true` if the layer is visible, and if the passed resolution is
- * between the layer's minResolution and maxResolution. The comparison is
- * inclusive for `minResolution` and exclusive for `maxResolution`.
+ * Return `true` if the layer is visible and if the provided view state
+ * has resolution and zoom levels that are in range of the layer's min/max.
  * @param {State} layerState Layer state.
- * @param {number} resolution Resolution.
- * @return {boolean} The layer is visible at the given resolution.
+ * @param {import("../View.js").State} viewState View state.
+ * @return {boolean} The layer is visible at the given view state.
  */
-export function visibleAtResolution(layerState, resolution) {
-  return layerState.visible && resolution >= layerState.minResolution &&
-      resolution < layerState.maxResolution;
+export function inView(layerState, viewState) {
+  if (!layerState.visible) {
+    return false;
+  }
+  const resolution = viewState.resolution;
+  if (resolution < layerState.minResolution || resolution >= layerState.maxResolution) {
+    return false;
+  }
+  const zoom = viewState.zoom;
+  return zoom > layerState.minZoom && zoom <= layerState.maxZoom;
 }
-
 
 export default Layer;

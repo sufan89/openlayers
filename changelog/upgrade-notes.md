@@ -4,6 +4,48 @@
 
 #### Backwards incompatible changes
 
+#### Removal of `TOUCH` constant from `ol/has`
+
+If you were previously using this constant, you can check if `'ontouchstart'` is defined in `window` instead.
+
+```js
+if ('ontouchstart' in window) {
+  // ...
+}
+```
+
+#### Removal of `GEOLOCATION` constant from `ol/has`
+
+If you were previously using this constant, you can check if `'geolocation'` is defined in `navigator` instead.
+
+```js
+if ('geolocation' in navigator) {
+  // ...
+}
+```
+
+#### Removal of CSS print rules
+
+The CSS media print rules were removed from the `ol.css` file. To get the previous behavior, use the following CSS:
+
+```css
+@media print {
+  .ol-control {
+    display: none;
+  }
+}
+```
+
+#### Removal of optional this arguments
+
+The optional this (i.e. opt_this) arguments were removed from the following methods.
+Please use closures, the es6 arrow function or the bind method to achieve this effect (Bind is explained here:
+https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/bind).
+
+* `forEachCorner` in `ol/extent`
+* `LRUCache#forEach`
+* `RBush#forEach` and `RBush#forEachInExtent`
+
 ##### The `setCenter`, `setZoom`, `setResolution` and `setRotation` methods on `ol/View` do not bypass constraints anymore
 
 Previously, these methods allowed setting values that were inconsistent with the given view constraints.
@@ -22,9 +64,9 @@ Previously, this options only constrained the view *center*. This behaviour can 
 
 As a side effect, the view `rotate` method is gone and has been replaced with `adjustRotation` which takes a delta as input.
 
-##### Zoom is constrained so only one world is visible
+##### The view is constrained so only one world is visible
 
-Previously, maps showed multiple worlds at low zoom levels. Now, the view is restricted to show only one world. To get the previous behavior, configure the `ol/View` with `multiWorld: true`.
+Previously, maps showed multiple worlds at low zoom levels. In addition, it used to be possible to pan off the north or south edge of the world.  Now, the view is restricted to show only one world, and you cannot pan off the edge. To get the previous behavior, configure the `ol/View` with `multiWorld: true`.
 
 ##### Removal of deprecated methods
 
@@ -87,6 +129,14 @@ If you were previously using `VectorTile` layers with `renderMode: 'vector'`, yo
 ##### Removal of the "renderMode" option for vector layers
 
 If you were previously using `Vector` layers with `renderMode: 'image'`, you have to remove this configuration option. Instead, use the new `ol/layer/VectorImage` layer with your `ol/source/Vector`.
+
+##### New declutter behavior
+
+If a map has more than one layer with `declutter` set to true, decluttering now considers all `Vector` and `VectorTile` layers, instead of decluttering each layer separately. Only `VectorImage` layers continue to be decluttered separately. The higher the z-index of a layer, the higher the priority of its decluttered items.
+
+Within a layer, the declutter order has changed. Previously, styles with a lower `zIndex` were prioritized over those with a higher `zIndex`. Now the opposite order is used.
+
+On vector layers, even if decluttered images or texts have a lower z-Index than polygons or lines, they will now be rendered on top of the polygons or lines. For vector tile layers, this was the case already in previous releases.
 
 ##### New `prerender` and `postrender` layer events replace old `precompose`, `render` and `postcompose` events
 
